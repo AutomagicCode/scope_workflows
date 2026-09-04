@@ -1,0 +1,30 @@
+name: 构建并测试/发布
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      os:
+        description: '构建平台'
+        type: choice
+        options:
+          - windows
+          - ubuntu-latest
+        default: windows
+      release_target:
+        description: '要发版的 commit hash(留空则只 build/test, 不发版)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  build:
+    runs-on: ${{ github.event.inputs.os || 'windows' }}
+    steps:
+      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/build-template@main
+        with:
+          release-target: ${{ github.event.inputs.release_target }}
+          release-token: ${{ secrets.BOT_TOKEN }}

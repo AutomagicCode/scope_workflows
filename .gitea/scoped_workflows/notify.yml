@@ -1,0 +1,22 @@
+name: 企业微信通知
+
+on:
+  release:
+    types: [published, created]
+  pull_request:
+    types: [opened, reopened]
+  pull_request_review:
+    types: [submitted, dismissed]
+  issues:
+    types: [opened, closed, reopened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  notify:
+    runs-on: windows
+    steps:
+      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/wechat-notify@main
+        with:
+          webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
+          token: ${{ secrets.BOT_TOKEN }}
