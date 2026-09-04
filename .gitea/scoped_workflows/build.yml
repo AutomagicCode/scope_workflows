@@ -22,7 +22,7 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ github.event.inputs.os || 'windows' }}
+    runs-on: ${{ github.event.inputs.os || vars.DEFAULT_RUNNER || 'windows' }}
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/build-template@main
         with:
