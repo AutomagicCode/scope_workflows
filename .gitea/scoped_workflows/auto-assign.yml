@@ -1,0 +1,31 @@
+name: 工单自动指派
+
+# PR 关联工单（正文用 refs #N）→ 工单置「处理中」
+# PR 合并后 → 工单置「已处理」并轮派测试组成员
+# 工单打「状态/测试通过」→ 关闭工单
+# 工单打「状态/测试不通过」→ 恢复打开工单
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, closed]
+  issues:
+    types: [labeled, unlabeled]
+
+jobs:
+  auto_assign:
+    name: 工单自动指派
+    runs-on: windows
+    steps:
+      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/auto-assign@main
+        with:
+          gitea-token: ${{ secrets.BOT_TOKEN }}
+
+          # 测试组成员 login，逗号分隔，配置在仓库变量 vars.TESTERS
+          testers: ${{ vars.TESTERS }}
+
+          # 如需自定义状态 label 名，取消注释并修改
+          # label-none: '状态/无'
+          # label-processing: '状态/处理中'
+          # label-testing: '状态/已处理'
+          # label-test-pass: '状态/测试通过'
+          # label-test-fail: '状态/测试不通过'
