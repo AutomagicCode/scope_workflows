@@ -1,0 +1,92 @@
+name: 测试评论命令
+
+# 测试人员在工单评论区输入命令，由 bot 账号代为切换测试标签（无需工单写权限）：
+#   /测试通过   → 打「测试/测试通过」标签（auto-assign 随后自动关闭工单）
+#   /测试未通过 → 打「测试/测试未通过」标签（auto-assign 随后自动恢复打开工单）
+# 说明：所有中文均通过 env 传入，API 响应强制 UTF-8 解码，脚本体不含中文字面量，
+#       以兼容 Gitea act_runner 在 Windows PowerShell 5.1（GB2312 控制台）下的编码限制。
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  handle:
+    name: 处理测试命令
+    runs-on: windows
+    # 仅处理工单（非 PR）评论，且评论以 / 开头
+    if: ${{ !github.event.issue.pull_request && startsWith(github.event.comment.body, '/') }}
+    steps:
+      - name: 解析测试命令并更新标签
+        shell: powershell
+        env:
+          SERVER: http://192.168.1.188:3000
+          TOKEN: ${{ secrets.BOT_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.comment.body }}
+          AUTHOR: ${{ github.event.comment.user.login }}
+          TESTERS: ${{ vars.TESTERS }}
+          # 中文全部走 env，避免脚本体中文字面量被 GB2312 误读
+          CMD_PASS: '/测试通过'
+          CMD_FAIL: '/测试未通过'
+          LABEL_PASS: '测试/测试通过'
+          LABEL_FAIL: '测试/测试未通过'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try { [Console]::OutputEncoding = [Text.Encoding]::UTF8; chcp 65001 | Out-Null } catch {}
+
+          $server = $env:SERVER.TrimEnd('/')
+          $token  = $env:TOKEN
+          $repo   = $env:REPO
+          $issue  = $env:ISSUE
+          $body   = $env:BODY.Trim()
+          $author = $env:AUTHOR
+          $pass   = $env:LABEL_PASS
+          $fail   = $env:LABEL_FAIL
+
+          if (-not $token) { Write-Error 'missing BOT_TOKEN'; exit 1 }
+
+          # 校验评论人是否在测试组名单
+          $testers = @()
+          if ($env:TESTERS) {
+              $testers = $env:TESTERS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          }
+          if ($testers -notcontains $author) {
+              Write-Host "comment author '$author' not in TESTERS, skip."
+              exit 0
+          }
+
+          # 匹配命令（关键字来自 env，无中文字面量）
+          $target = $null
+          if ($body.StartsWith($env:CMD_PASS)) {
+              $target = $pass
+          } elseif ($body.StartsWith($env:CMD_FAIL)) {
+              $target = $fail
+          } else {
+              Write-Host 'not a test command, skip.'
+              exit 0
+          }
+
+          $auth = @{ Authorization = "token $token" }
+
+          # UTF-8 安全的 GET：PS5.1 的 Invoke-RestMethod 对无 charset 的响应会用 Latin1 解码致中文乱码
+          $resp = Invoke-WebRequest -Method Get -Uri "$server/api/v1/repos/$repo/issues/$issue" `
+              -Headers $auth -UseBasicParsing
+          $issueObj = [Text.Encoding]::UTF8.GetString($resp.RawContentStream.ToArray()) | ConvertFrom-Json
+
+          $names = @()
+          if ($issueObj.labels) { $names = @($issueObj.labels | ForEach-Object { [string]$_.name }) }
+
+          # 移除两个测试标签后重新加上目标标签，保留其它标签不动
+          $names = $names | Where-Object { $_ -ne $pass -and $_ -ne $fail }
+          $names += $target
+          $names = @($names | Select-Object -Unique)
+
+          # UTF-8 编码 body 发送
+          $json  = @{ labels = $names } | ConvertTo-Json -Depth 5
+          $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+          Invoke-RestMethod -Method Put -Uri "$server/api/v1/repos/$repo/issues/$issue/labels" `
+              -Headers $auth -Body $bytes -ContentType 'application/json; charset=utf-8' | Out-Null
+
+          Write-Host "issue #$issue label set -> $target (by $author)"
