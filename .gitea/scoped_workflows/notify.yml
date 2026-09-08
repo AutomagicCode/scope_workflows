@@ -20,3 +20,9 @@ jobs:
         with:
           webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
           token: ${{ secrets.BOT_TOKEN }}
+
+          # issue_comment 场景（评论里 @ 人）需 text 消息才能@；其它场景保持 markdown 更美观
+          msgtype: ${{ github.event_name == 'issue_comment' && 'text' || 'markdown' }}
+
+          # Gitea @login 到企业微信 userID 的映射，例如 zhang3:ZhangSan,li4:LiSi（支持 : 或 = 分隔）
+          user-map: ${{ vars.WECHAT_USERMAP }}
