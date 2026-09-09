@@ -30,8 +30,8 @@ jobs:
           # 中文全部走 env，避免脚本体中文字面量被 GB2312 误读
           CMD_PASS: '/测试通过'
           CMD_FAIL: '/测试未通过'
-          LABEL_PASS: '测试/测试通过'
-          LABEL_FAIL: '测试/测试未通过'
+          LABEL_PASS: '测试/通过'
+          LABEL_FAIL: '测试/未通过'
         run: |
           $ErrorActionPreference = 'Stop'
           try { [Console]::OutputEncoding = [Text.Encoding]::UTF8; chcp 65001 | Out-Null } catch {}
