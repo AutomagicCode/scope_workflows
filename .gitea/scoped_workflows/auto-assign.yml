@@ -31,3 +31,57 @@ jobs:
           label-test-fail: '测试/测试未通过'
           # 「无状态」= 不含任何 开发/ 测试/ 标签；无需单独 label，留空即可
           label-none: ''
+
+  request_reviewers:
+    name: 自动指定代码评审人
+    runs-on: windows
+    if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'reopened')
+    steps:
+      - name: 读取分支保护并自动指定评审人
+        shell: powershell
+        env:
+          GITEA_TOKEN: ${{ secrets.BOT_TOKEN }}
+          REPO_FULL: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          $parts = $env:REPO_FULL -split '/'
+          $owner = $parts[0]
+          $repo = $parts[1]
+          $apiBase = "http://192.168.1.188:3000/api/v1/repos/$owner/$repo"
+          $branch = $env:BASE_REF
+          $encodedBranch = [System.Uri]::EscapeDataString($branch)
+          $ruleUrl = "$apiBase/branch_protections/$encodedBranch"
+          $headers = @{ Authorization = "token $env:GITEA_TOKEN" }
+          try {
+            $rule = Invoke-RestMethod -Uri $ruleUrl -Headers $headers -Method GET
+          } catch {
+            Write-Host "无法读取分支保护规则 ${branch}: $_"
+            exit 0
+          }
+          $reviewers = @()
+          $teamReviewers = @()
+          if ($rule.enable_approvals_whitelist -eq $true) {
+            if ($rule.approvals_whitelist_username -and $rule.approvals_whitelist_username.Count -gt 0) {
+              $reviewers = $rule.approvals_whitelist_username
+            }
+            if ($rule.approvals_whitelist_teams -and $rule.approvals_whitelist_teams.Count -gt 0) {
+              $teamReviewers = $rule.approvals_whitelist_teams
+            }
+          }
+          if ($reviewers.Count -eq 0 -and $teamReviewers.Count -eq 0) {
+            Write-Host "分支保护未配置审批白名单，跳过"
+            exit 0
+          }
+          $body = @{}
+          if ($reviewers.Count -gt 0) { $body.reviewers = $reviewers }
+          if ($teamReviewers.Count -gt 0) { $body.team_reviewers = $teamReviewers }
+          $json = $body | ConvertTo-Json
+          $postUrl = "$apiBase/pulls/$env:PR_NUMBER/requested_reviewers"
+          try {
+            Invoke-RestMethod -Uri $postUrl -Headers $headers -Method POST -Body $json -ContentType 'application/json'
+            Write-Host "已请求评审人: $json"
+          } catch {
+            Write-Host "请求评审人失败: $_"
+            exit 0
+          }
