@@ -1,8 +1,11 @@
 name: 测试评论命令
 
-# 测试人员在工单评论区输入命令，由 bot 账号代为切换测试标签（无需工单写权限）：
-#   /测试通过   → 打「测试/测试通过」标签（auto-assign 随后自动关闭工单）
-#   /测试未通过 → 打「测试/测试未通过」标签（auto-assign 随后自动恢复打开工单）
+# 在工单评论区输入命令，由 bot 账号代为切换标签（无需工单写权限）：
+#   /测试通过   → 打「测试/通过」标签（auto-assign 随后自动关闭工单）
+#   /测试不通过 → 打「测试/不通过」标签（auto-assign 随后自动恢复打开工单）
+#   /已处理 或 /已解决 → 打「开发/已处理」标签（互斥移除「开发/处理中」）
+# 权限：测试命令仅当 vars.TESTERS 配置且非空时才限名单内；为空则任何人可用。
+#       /已处理、/已解决 任何人均可用。
 # 说明：所有中文均通过 env 传入，API 响应强制 UTF-8 解码，脚本体不含中文字面量，
 #       以兼容 Gitea act_runner 在 Windows PowerShell 5.1（GB2312 控制台）下的编码限制。
 
@@ -29,9 +32,13 @@ jobs:
           TESTERS: ${{ vars.TESTERS }}
           # 中文全部走 env，避免脚本体中文字面量被 GB2312 误读
           CMD_PASS: '/测试通过'
-          CMD_FAIL: '/测试未通过'
+          CMD_FAIL: '/测试不通过'
+          CMD_DONE1: '/已处理'
+          CMD_DONE2: '/已解决'
           LABEL_PASS: '测试/通过'
-          LABEL_FAIL: '测试/未通过'
+          LABEL_FAIL: '测试/不通过'
+          LABEL_DONE: '开发/已处理'
+          LABEL_DEV_PROCESSING: '开发/处理中'
         run: |
           $ErrorActionPreference = 'Stop'
           try { [Console]::OutputEncoding = [Text.Encoding]::UTF8; chcp 65001 | Out-Null } catch {}
@@ -47,24 +54,32 @@ jobs:
 
           if (-not $token) { Write-Error 'missing BOT_TOKEN'; exit 1 }
 
-          # 校验评论人是否在测试组名单
+          $done    = $env:LABEL_DONE
+          $devProc = $env:LABEL_DEV_PROCESSING
+
+          # 匹配命令（关键字来自 env，无中文字面量）
+          # $removeSet：同组互斥标签集，打目标前先移除；$requireTester：是否受测试组名单限制
+          $target = $null
+          $removeSet = @()
+          $requireTester = $false
+          if ($body.StartsWith($env:CMD_PASS)) {
+              $target = $pass; $removeSet = @($pass, $fail); $requireTester = $true
+          } elseif ($body.StartsWith($env:CMD_FAIL)) {
+              $target = $fail; $removeSet = @($pass, $fail); $requireTester = $true
+          } elseif ($body.StartsWith($env:CMD_DONE1) -or $body.StartsWith($env:CMD_DONE2)) {
+              $target = $done; $removeSet = @($devProc, $done); $requireTester = $false
+          } else {
+              Write-Host 'not a command, skip.'
+              exit 0
+          }
+
+          # 权限校验：仅测试命令、且 TESTERS 配置非空时，才限名单内；否则任何人可用
           $testers = @()
           if ($env:TESTERS) {
               $testers = $env:TESTERS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
           }
-          if ($testers -notcontains $author) {
+          if ($requireTester -and $testers.Count -gt 0 -and ($testers -notcontains $author)) {
               Write-Host "comment author '$author' not in TESTERS, skip."
-              exit 0
-          }
-
-          # 匹配命令（关键字来自 env，无中文字面量）
-          $target = $null
-          if ($body.StartsWith($env:CMD_PASS)) {
-              $target = $pass
-          } elseif ($body.StartsWith($env:CMD_FAIL)) {
-              $target = $fail
-          } else {
-              Write-Host 'not a test command, skip.'
               exit 0
           }
 
@@ -78,8 +93,8 @@ jobs:
           $names = @()
           if ($issueObj.labels) { $names = @($issueObj.labels | ForEach-Object { [string]$_.name }) }
 
-          # 移除两个测试标签后重新加上目标标签，保留其它标签不动
-          $names = $names | Where-Object { $_ -ne $pass -and $_ -ne $fail }
+          # 移除同组互斥标签后重新加上目标标签，保留其它组标签不动
+          $names = $names | Where-Object { $removeSet -notcontains $_ }
           $names += $target
           $names = @($names | Select-Object -Unique)
 
