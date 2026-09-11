@@ -1,0 +1,43 @@
+name: 批量创建测试用例工单
+
+# 手动触发：读取当前仓库根目录的 Excel，为每条测试用例创建工单
+# Excel 约定：含「测试」「用例」的 sheet；第 1 行大标题，第 2 行表头
+# 表头列：测试模块、功能点、测试目的/描述、前置条件、步骤、预期结果、实际结果、测试状态、备注
+
+on:
+  workflow_dispatch:
+    inputs:
+      excel_file:
+        description: 'Excel 文件名（仓库内相对路径）'
+        required: true
+        default: 'test_cases.xlsx'
+      dry_run:
+        description: '仅预览不创建（true/false）'
+        required: true
+        default: 'true'
+      create_summary:
+        description: '是否创建汇总工单（true/false）'
+        required: true
+        default: 'true'
+      summary_title:
+        description: '汇总工单标题'
+        required: false
+        default: '测试用例汇总'
+
+jobs:
+  import:
+    name: 批量创建测试用例工单
+    runs-on: windows
+    steps:
+      - name: 下载源码
+        uses: actions/checkout@v4
+
+      - name: 导入测试用例
+        uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/import-test-cases@main
+        with:
+          gitea-token: ${{ secrets.BOT_TOKEN }}
+          target-repo: ${{ github.repository }}
+          excel-file: ${{ github.event.inputs.excel_file }}
+          dry-run: ${{ github.event.inputs.dry_run }}
+          create-summary: ${{ github.event.inputs.create_summary }}
+          summary-title: ${{ github.event.inputs.summary_title }}
