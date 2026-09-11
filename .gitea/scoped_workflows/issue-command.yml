@@ -6,6 +6,8 @@ name: 测试评论命令
 #   /已处理 或 /已解决 → 打「开发/已处理」标签（互斥移除「开发/处理中」）
 # 权限：测试命令仅当 vars.TESTERS 配置且非空时才限名单内；为空则任何人可用。
 #       /已处理、/已解决 任何人均可用。
+# 前置条件：/测试通过、/测试不通过 仅当工单已具备「开发/已处理」标签时才生效；
+#       否则不改标签，bot 回复提示（仍有未合并 PR → 还没处理完；否则 → 需合并 PR 或评论 /已处理）。
 # 说明：所有中文均通过 env 传入，API 响应强制 UTF-8 解码，脚本体不含中文字面量，
 #       以兼容 Gitea act_runner 在 Windows PowerShell 5.1（GB2312 控制台）下的编码限制。
 
@@ -39,6 +41,10 @@ jobs:
           LABEL_FAIL: '测试/不通过'
           LABEL_DONE: '开发/已处理'
           LABEL_DEV_PROCESSING: '开发/处理中'
+          # 测试命令缺少「开发/已处理」时 bot 的回复文案（走 env 避免 GB2312 乱码）
+          MSG_NEED_DONE: '(这个工单缺少「开发/已处理」标签，/测试* 命令暂不生效。)'
+          MSG_PR_OPEN: '(＞﹏＜) 这个问题还没处理完呢～请等关联的 PR 合并后再测试吧。'
+          MSG_NEED_MERGE: '(๑•̀ㅂ•́)و 至少需要有人用 PR 合并，或回复评论 /已处理 来触发工单添加「开发/已处理」标签。'
         run: |
           $ErrorActionPreference = 'Stop'
           try { [Console]::OutputEncoding = [Text.Encoding]::UTF8; chcp 65001 | Out-Null } catch {}
@@ -59,13 +65,15 @@ jobs:
 
           # 匹配命令（关键字来自 env，无中文字面量）
           # $removeSet：同组互斥标签集，打目标前先移除；$requireTester：是否受测试组名单限制
+          # $requireDone：测试命令（通过/不通过）需工单已具备「开发/已处理」标签才生效
           $target = $null
           $removeSet = @()
           $requireTester = $false
+          $requireDone = $false
           if ($body.StartsWith($env:CMD_PASS)) {
-              $target = $pass; $removeSet = @($pass, $fail); $requireTester = $true
+              $target = $pass; $removeSet = @($pass, $fail); $requireTester = $true; $requireDone = $true
           } elseif ($body.StartsWith($env:CMD_FAIL)) {
-              $target = $fail; $removeSet = @($pass, $fail); $requireTester = $true
+              $target = $fail; $removeSet = @($pass, $fail); $requireTester = $true; $requireDone = $true
           } elseif ($body.StartsWith($env:CMD_DONE1) -or $body.StartsWith($env:CMD_DONE2)) {
               $target = $done; $removeSet = @($devProc, $done); $requireTester = $false
           } else {
@@ -92,6 +100,33 @@ jobs:
 
           $names = @()
           if ($issueObj.labels) { $names = @($issueObj.labels | ForEach-Object { [string]$_.name }) }
+
+          # 测试命令前置条件：工单必须已具备「开发/已处理」标签，否则不改标签并回复提示
+          if ($requireDone -and ($names -notcontains $done)) {
+              # 判断是否仍有未合并（打开）的 PR 关联本工单
+              $hasOpenPR = $false
+              try {
+                  $prResp = Invoke-WebRequest -Method Get `
+                      -Uri "$server/api/v1/repos/$repo/pulls?state=open&limit=50" `
+                      -Headers $auth -UseBasicParsing
+                  $prs = [Text.Encoding]::UTF8.GetString($prResp.RawContentStream.ToArray()) | ConvertFrom-Json
+                  foreach ($pr in $prs) {
+                      $b = [string]$pr.body
+                      if ($b -match "(^|[^0-9])#$issue(\D|$)") { $hasOpenPR = $true; break }
+                  }
+              } catch { Write-Host "check open PR failed: $_" }
+
+              $msg = $env:MSG_NEED_DONE
+              if ($hasOpenPR) { $msg = $msg + "`n" + $env:MSG_PR_OPEN }
+              else { $msg = $msg + "`n" + $env:MSG_NEED_MERGE }
+
+              $cjson  = @{ body = $msg } | ConvertTo-Json -Depth 5
+              $cbytes = [Text.Encoding]::UTF8.GetBytes($cjson)
+              Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" `
+                  -Headers $auth -Body $cbytes -ContentType 'application/json; charset=utf-8' | Out-Null
+              Write-Host "issue #$issue missing '$done', test command rejected (hasOpenPR=$hasOpenPR)."
+              exit 0
+          }
 
           # 移除同组互斥标签后重新加上目标标签，保留其它组标签不动
           $names = $names | Where-Object { $removeSet -notcontains $_ }
