@@ -46,6 +46,9 @@ jobs:
           MSG_PR_OPEN: '(＞﹏＜) 这个问题还没处理完呢～请等关联的 PR 合并后再测试吧。'
           MSG_NEED_MERGE: '(๑•̀ㅂ•́)و 至少需要有人用 PR 合并，或回复评论 /已处理 来触发工单添加「开发/已处理」标签。'
         run: |
+          # NOTE: keep the script body ASCII-only (comments included). Chinese only via env.
+          # PS 5.1 on the Windows runner reads this file as GB2312; non-ASCII in the body
+          # can corrupt tokens (backtick/brace) and break parsing.
           $ErrorActionPreference = 'Stop'
           try { [Console]::OutputEncoding = [Text.Encoding]::UTF8; chcp 65001 | Out-Null } catch {}
 
@@ -63,9 +66,10 @@ jobs:
           $done    = $env:LABEL_DONE
           $devProc = $env:LABEL_DEV_PROCESSING
 
-          # 匹配命令（关键字来自 env，无中文字面量）
-          # $removeSet：同组互斥标签集，打目标前先移除；$requireTester：是否受测试组名单限制
-          # $requireDone：测试命令（通过/不通过）需工单已具备「开发/已处理」标签才生效
+          # Match command (keywords come from env, no Chinese literals).
+          # $removeSet: mutually-exclusive labels to strip before adding target.
+          # $requireTester: whether the command is limited to the TESTERS list.
+          # $requireDone: test commands (pass/fail) require the "done" label first.
           $target = $null
           $removeSet = @()
           $requireTester = $false
@@ -81,7 +85,7 @@ jobs:
               exit 0
           }
 
-          # 权限校验：仅测试命令、且 TESTERS 配置非空时，才限名单内；否则任何人可用
+          # Permission: only test commands, and only when TESTERS is non-empty, are limited to the list.
           $testers = @()
           if ($env:TESTERS) {
               $testers = $env:TESTERS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
@@ -93,7 +97,7 @@ jobs:
 
           $auth = @{ Authorization = "token $token" }
 
-          # UTF-8 安全的 GET：PS5.1 的 Invoke-RestMethod 对无 charset 的响应会用 Latin1 解码致中文乱码
+          # UTF-8 safe GET: PS5.1 Invoke-RestMethod decodes charset-less responses as Latin1.
           $resp = Invoke-WebRequest -Method Get -Uri "$server/api/v1/repos/$repo/issues/$issue" `
               -Headers $auth -UseBasicParsing
           $issueObj = [Text.Encoding]::UTF8.GetString($resp.RawContentStream.ToArray()) | ConvertFrom-Json
@@ -101,18 +105,18 @@ jobs:
           $names = @()
           if ($issueObj.labels) { $names = @($issueObj.labels | ForEach-Object { [string]$_.name }) }
 
-          # 测试命令前置条件：工单必须已具备「开发/已处理」标签，否则不改标签并回复提示
+          # Precondition for test commands: issue must already have the "done" label.
           if ($requireDone -and ($names -notcontains $done)) {
-              # 判断是否仍有未合并（打开）的 PR 关联本工单
+              # Check whether an open (unmerged) PR still references this issue.
               $hasOpenPR = $false
+              $pullsUri = "$server/api/v1/repos/$repo/pulls?state=open" + "&limit=50"
               try {
-                  $prResp = Invoke-WebRequest -Method Get `
-                      -Uri "$server/api/v1/repos/$repo/pulls?state=open&limit=50" `
-                      -Headers $auth -UseBasicParsing
+                  $prResp = Invoke-WebRequest -Method Get -Uri $pullsUri -Headers $auth -UseBasicParsing
                   $prs = [Text.Encoding]::UTF8.GetString($prResp.RawContentStream.ToArray()) | ConvertFrom-Json
+                  $refPattern = '(^|[^0-9])#' + $issue + '([^0-9]|$)'
                   foreach ($pr in $prs) {
                       $b = [string]$pr.body
-                      if ($b -match "(^|[^0-9])#$issue(\D|$)") { $hasOpenPR = $true; break }
+                      if ($b -match $refPattern) { $hasOpenPR = $true; break }
                   }
               } catch { Write-Host "check open PR failed: $_" }
 
@@ -124,16 +128,16 @@ jobs:
               $cbytes = [Text.Encoding]::UTF8.GetBytes($cjson)
               Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" `
                   -Headers $auth -Body $cbytes -ContentType 'application/json; charset=utf-8' | Out-Null
-              Write-Host "issue #$issue missing '$done', test command rejected (hasOpenPR=$hasOpenPR)."
+              Write-Host "issue #$issue missing done label, test command rejected (hasOpenPR=$hasOpenPR)."
               exit 0
           }
 
-          # 移除同组互斥标签后重新加上目标标签，保留其它组标签不动
+          # Strip mutually-exclusive labels, then add the target label; keep other groups untouched.
           $names = $names | Where-Object { $removeSet -notcontains $_ }
           $names += $target
           $names = @($names | Select-Object -Unique)
 
-          # UTF-8 编码 body 发送
+          # Send body as UTF-8.
           $json  = @{ labels = $names } | ConvertTo-Json -Depth 5
           $bytes = [Text.Encoding]::UTF8.GetBytes($json)
           Invoke-RestMethod -Method Put -Uri "$server/api/v1/repos/$repo/issues/$issue/labels" `
