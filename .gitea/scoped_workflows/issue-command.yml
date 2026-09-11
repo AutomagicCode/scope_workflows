@@ -132,15 +132,55 @@ jobs:
               exit 0
           }
 
-          # Strip mutually-exclusive labels, then add the target label; keep other groups untouched.
-          $names = $names | Where-Object { $removeSet -notcontains $_ }
-          $names += $target
-          $names = @($names | Select-Object -Unique)
+          # Apply changes by label ID (add target / delete mutually-exclusive) instead of
+          # replacing the whole label set. A full PUT by name drops org-level labels whose
+          # names cannot be resolved at repo scope (e.g. shared labels), so it must be avoided.
 
-          # Send body as UTF-8.
-          $json  = @{ labels = $names } | ConvertTo-Json -Depth 5
-          $bytes = [Text.Encoding]::UTF8.GetBytes($json)
-          Invoke-RestMethod -Method Put -Uri "$server/api/v1/repos/$repo/issues/$issue/labels" `
-              -Headers $auth -Body $bytes -ContentType 'application/json; charset=utf-8' | Out-Null
+          # Delete mutually-exclusive labels currently on the issue, by their existing id.
+          if ($issueObj.labels) {
+              foreach ($lb in $issueObj.labels) {
+                  $ln = [string]$lb.name
+                  if (($removeSet -contains $ln) -and ($ln -ne $target)) {
+                      try {
+                          Invoke-RestMethod -Method Delete `
+                              -Uri "$server/api/v1/repos/$repo/issues/$issue/labels/$($lb.id)" `
+                              -Headers $auth | Out-Null
+                          Write-Host "removed label '$ln' (id $($lb.id))"
+                      } catch { Write-Host "remove label '$ln' skipped: $_" }
+                  }
+              }
+          }
 
-          Write-Host "issue #$issue label set -> $target (by $author)"
+          # Add the target label if not already present. Resolve its id from repo + org labels.
+          if ($names -contains $target) {
+              Write-Host "issue #$issue already has target label, nothing to add."
+          } else {
+              $targetId = $null
+              $owner = $repo.Split('/')[0]
+              foreach ($lp in @("/repos/$repo/labels", "/orgs/$owner/labels")) {
+                  if ($targetId) { break }
+                  $page = 1
+                  while ($true) {
+                      $lurl = "$server/api/v1$lp" + "?limit=50" + "&page=$page"
+                      try {
+                          $lr = Invoke-WebRequest -Method Get -Uri $lurl -Headers $auth -UseBasicParsing
+                      } catch { break }
+                      $larr = [Text.Encoding]::UTF8.GetString($lr.RawContentStream.ToArray()) | ConvertFrom-Json
+                      if (-not $larr) { break }
+                      $cnt = @($larr).Count
+                      if ($cnt -eq 0) { break }
+                      foreach ($l in $larr) { if ([string]$l.name -eq $target) { $targetId = $l.id; break } }
+                      if ($targetId -or ($cnt -lt 50)) { break }
+                      $page++
+                  }
+              }
+              if ($targetId) {
+                  $abody  = @{ labels = @($targetId) } | ConvertTo-Json
+                  $abytes = [Text.Encoding]::UTF8.GetBytes($abody)
+                  Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/labels" `
+                      -Headers $auth -Body $abytes -ContentType 'application/json; charset=utf-8' | Out-Null
+                  Write-Host "issue #$issue added label -> $target (by $author)"
+              } else {
+                  Write-Host "WARN: target label not found in repo/org labels, skip add."
+              }
+          }
