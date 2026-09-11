@@ -45,6 +45,8 @@ jobs:
           MSG_NEED_DONE: '(这个工单缺少「开发/已处理」标签，/测试* 命令暂不生效。)'
           MSG_PR_OPEN: '(＞﹏＜) 这个问题还没处理完呢～请等关联的 PR 合并后再测试吧。'
           MSG_NEED_MERGE: '(๑•̀ㅂ•́)و 至少需要有人用 PR 合并，或回复评论 /已处理 来触发工单添加「开发/已处理」标签。'
+          # 测试命令已执行，但本工单仍有未合并 PR 时的提醒（仅提醒，不拦截）
+          MSG_TEST_OPEN_PR: '(・_・;) 提醒：本工单仍有未合并的 PR，代码可能尚未全部进入主线，测试结论请以此为准确认。'
         run: |
           # NOTE: keep the script body ASCII-only (comments included). Chinese only via env.
           # PS 5.1 on the Windows runner reads this file as GB2312; non-ASCII in the body
@@ -105,10 +107,11 @@ jobs:
           $names = @()
           if ($issueObj.labels) { $names = @($issueObj.labels | ForEach-Object { [string]$_.name }) }
 
-          # Precondition for test commands: issue must already have the "done" label.
-          if ($requireDone -and ($names -notcontains $done)) {
-              # Check whether an open (unmerged) PR still references this issue.
-              $hasOpenPR = $false
+          # For test commands, find whether an open (unmerged) PR still references this issue.
+          # Computed up front so both the gate (missing done) and the warn-only path can use it.
+          $hasOpenPR = $false
+          $openPrNums = @()
+          if ($requireDone) {
               $pullsUri = "$server/api/v1/repos/$repo/pulls?state=open" + "&limit=50"
               try {
                   $prResp = Invoke-WebRequest -Method Get -Uri $pullsUri -Headers $auth -UseBasicParsing
@@ -116,10 +119,13 @@ jobs:
                   $refPattern = '(^|[^0-9])#' + $issue + '([^0-9]|$)'
                   foreach ($pr in $prs) {
                       $b = [string]$pr.body
-                      if ($b -match $refPattern) { $hasOpenPR = $true; break }
+                      if ($b -match $refPattern) { $hasOpenPR = $true; $openPrNums += $pr.number }
                   }
               } catch { Write-Host "check open PR failed: $_" }
+          }
 
+          # Precondition for test commands: issue must already have the "done" label.
+          if ($requireDone -and ($names -notcontains $done)) {
               $msg = $env:MSG_NEED_DONE
               if ($hasOpenPR) { $msg = $msg + "`n" + $env:MSG_PR_OPEN }
               else { $msg = $msg + "`n" + $env:MSG_NEED_MERGE }
@@ -183,4 +189,16 @@ jobs:
               } else {
                   Write-Host "WARN: target label not found in repo/org labels, skip add."
               }
+          }
+
+          # Warn-only: a test command ran while an open PR still references this issue.
+          # We do not block the command; just leave a heads-up comment.
+          if ($requireDone -and $hasOpenPR) {
+              $wmsg = $env:MSG_TEST_OPEN_PR
+              if ($openPrNums.Count -gt 0) { $wmsg = $wmsg + " (PR #" + ($openPrNums -join ', #') + ")" }
+              $wjson  = @{ body = $wmsg } | ConvertTo-Json -Depth 5
+              $wbytes = [Text.Encoding]::UTF8.GetBytes($wjson)
+              Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" `
+                  -Headers $auth -Body $wbytes -ContentType 'application/json; charset=utf-8' | Out-Null
+              Write-Host "warned: open PR still references issue #$issue (PR $($openPrNums -join ','))."
           }
