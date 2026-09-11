@@ -56,7 +56,7 @@ jobs:
           try {
             $rule = Invoke-RestMethod -Uri $ruleUrl -Headers $headers -Method GET
           } catch {
-            Write-Host "无法读取分支保护规则 ${branch}: $_"
+            Write-Host "cannot read branch protection for ${branch}: $_"
             exit 0
           }
           $reviewers = @()
@@ -70,7 +70,7 @@ jobs:
             }
           }
           if ($reviewers.Count -eq 0 -and $teamReviewers.Count -eq 0) {
-            Write-Host "分支保护未配置审批白名单，跳过"
+            Write-Host "branch protection has no approval whitelist, skip"
             exit 0
           }
           $body = @{}
@@ -80,8 +80,8 @@ jobs:
           $postUrl = "$apiBase/pulls/$env:PR_NUMBER/requested_reviewers"
           try {
             Invoke-RestMethod -Uri $postUrl -Headers $headers -Method POST -Body $json -ContentType 'application/json'
-            Write-Host "已请求评审人: $json"
+            Write-Host "requested reviewers: $json"
           } catch {
-            Write-Host "请求评审人失败: $_"
+            Write-Host "request reviewers failed: $_"
             exit 0
           }
