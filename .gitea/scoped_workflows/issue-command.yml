@@ -57,6 +57,39 @@ jobs:
           $ErrorActionPreference = 'Stop'
           try { [Console]::OutputEncoding = [Text.Encoding]::UTF8; chcp 65001 | Out-Null } catch {}
 
+          function Add-Label($name) {
+              if (-not $name) { return }
+              $id = $null
+              $owner = $repo.Split('/')[0]
+              foreach ($lp in @("/repos/$repo/labels", "/orgs/$owner/labels")) {
+                  if ($id) { break }
+                  $page = 1
+                  while ($true) {
+                      $lurl = "$server/api/v1$lp" + "?limit=50" + "&page=$page"
+                      try {
+                          $lr = Invoke-WebRequest -Method Get -Uri $lurl -Headers $auth -UseBasicParsing
+                      } catch { break }
+                      $larr = [Text.Encoding]::UTF8.GetString($lr.RawContentStream.ToArray()) | ConvertFrom-Json
+                      if (-not $larr) { break }
+                      $cnt = @($larr).Count
+                      if ($cnt -eq 0) { break }
+                      foreach ($l in $larr) { if ([string]$l.name -eq $name) { $id = $l.id; break } }
+                      if ($id -or ($cnt -lt 50)) { break }
+                      $page++
+                  }
+              }
+              if ($id) {
+                  $abody = @{ labels = @($id) } | ConvertTo-Json
+                  $abytes = [Text.Encoding]::UTF8.GetBytes($abody)
+                  try {
+                      Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/labels" -Headers $auth -Body $abytes -ContentType 'application/json; charset=utf-8' | Out-Null
+                      Write-Host "issue #$issue added label -> $name"
+                  } catch { Write-Host "add label $name failed: $_" }
+              } else {
+                  Write-Host "WARN: label not found in repo/org labels, skip add: $name"
+              }
+          }
+
           $server = $env:SERVER.TrimEnd('/')
           $token  = $env:TOKEN
           $repo   = $env:REPO
@@ -82,14 +115,16 @@ jobs:
           $statusGroup = @($pending, $devProc, $done)
           $target = $null
           $removeSet = @()
+          $extra = $null
+          $targetState = $null
           $requireTester = $false
           $requireDone = $false
           if ($body.StartsWith($env:CMD_PASS)) {
-              $target = $pass; $removeSet = $testGroup; $requireTester = $true; $requireDone = $true
+              $target = $pass; $removeSet = $testGroup; $targetState = 'closed'; $requireTester = $true; $requireDone = $true
           } elseif ($body.StartsWith($env:CMD_FAIL)) {
-              $target = $fail; $removeSet = $testGroup; $requireTester = $true; $requireDone = $true
+              $target = $fail; $removeSet = @($testGroup + $statusGroup); $extra = $pending; $targetState = 'open'; $requireTester = $true; $requireDone = $true
           } elseif ($body.StartsWith($env:CMD_DONE1) -or $body.StartsWith($env:CMD_DONE2)) {
-              $target = $done; $removeSet = @($statusGroup + $testGroup); $requireTester = $false
+              $target = $done; $removeSet = @($statusGroup + $testGroup); $targetState = 'open'; $requireTester = $false
           } else {
               Write-Host 'not a command, skip.'
               exit 0
@@ -165,38 +200,28 @@ jobs:
               }
           }
 
-          # Add the target label if not already present. Resolve its id from repo + org labels.
+          # Refresh names after removals; keep the target label if it was already present.
+          $names = @($issueObj.labels | ForEach-Object { [string]$_.name } | Where-Object { ($_ -eq $target) -or ($removeSet -notcontains $_) })
+
+          # Add the target label and any extra label (e.g., pending for test-fail).
           if ($names -contains $target) {
               Write-Host "issue #$issue already has target label, nothing to add."
           } else {
-              $targetId = $null
-              $owner = $repo.Split('/')[0]
-              foreach ($lp in @("/repos/$repo/labels", "/orgs/$owner/labels")) {
-                  if ($targetId) { break }
-                  $page = 1
-                  while ($true) {
-                      $lurl = "$server/api/v1$lp" + "?limit=50" + "&page=$page"
-                      try {
-                          $lr = Invoke-WebRequest -Method Get -Uri $lurl -Headers $auth -UseBasicParsing
-                      } catch { break }
-                      $larr = [Text.Encoding]::UTF8.GetString($lr.RawContentStream.ToArray()) | ConvertFrom-Json
-                      if (-not $larr) { break }
-                      $cnt = @($larr).Count
-                      if ($cnt -eq 0) { break }
-                      foreach ($l in $larr) { if ([string]$l.name -eq $target) { $targetId = $l.id; break } }
-                      if ($targetId -or ($cnt -lt 50)) { break }
-                      $page++
-                  }
-              }
-              if ($targetId) {
-                  $abody  = @{ labels = @($targetId) } | ConvertTo-Json
-                  $abytes = [Text.Encoding]::UTF8.GetBytes($abody)
-                  Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/labels" `
-                      -Headers $auth -Body $abytes -ContentType 'application/json; charset=utf-8' | Out-Null
-                  Write-Host "issue #$issue added label -> $target (by $author)"
-              } else {
-                  Write-Host "WARN: target label not found in repo/org labels, skip add."
-              }
+              Add-Label $target
+          }
+
+          if ($extra -and ($names -notcontains $extra)) {
+              Add-Label $extra
+          }
+
+          # Set issue state: closed for /测试通过, open for /测试不通过 and /已处理 /已解决.
+          if ($targetState) {
+              $sjson = @{ state = $targetState } | ConvertTo-Json
+              $sbytes = [Text.Encoding]::UTF8.GetBytes($sjson)
+              try {
+                  Invoke-RestMethod -Method Patch -Uri "$server/api/v1/repos/$repo/issues/$issue" -Headers $auth -Body $sbytes -ContentType 'application/json; charset=utf-8' | Out-Null
+                  Write-Host "issue #$issue state set to $targetState"
+              } catch { Write-Host "set issue state failed: $_" }
           }
 
           # Warn-only: a test command ran while an open PR still references this issue.
