@@ -38,6 +38,12 @@ jobs:
   auto_assign:
     name: 工单自动管理
     runs-on: windows
+    # 对 GiteaBot 发的非命令/非 @ai 评论跳过（其它用 GITEA_TOKEN 不发 issue_comment 事件）
+    if: >
+      github.event_name != 'issue_comment' ||
+      github.event.comment.user.login != 'GiteaBot' ||
+      startsWith(github.event.comment.body, '/') ||
+      contains(github.event.comment.body, '@ai')
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/auto-assign@main
         with:
@@ -59,7 +65,7 @@ jobs:
       - name: 读取分支保护并自动指定评审人
         shell: powershell
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          BOT_TOKEN: ${{ secrets.GITEA_TOKEN }}
           REPO_FULL: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.base_ref }}
@@ -118,7 +124,8 @@ jobs:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/build-template@main
         with:
           release-target: ${{ github.event.inputs.release_target }}
-          bot-token: ${{ secrets.BOT_TOKEN }}
+          # 发版/打 tag 用 BOT_TOKEN；普通 build/test 用 GITEA_TOKEN
+          bot-token: ${{ (github.ref_type == 'tag' || github.event.inputs.release_target != '') && secrets.BOT_TOKEN || secrets.GITEA_TOKEN }}
 
   # 工单 / 评论 / PR 审核意见处理：不涉及 build，仅依赖 auto_assign
   ai_issue:
@@ -138,6 +145,207 @@ jobs:
           max-diff-chars: ${{ vars.AI_MAX_DIFF_CHARS || '24000' }}
           use-gemini-cli: ${{ vars.AI_USE_GEMINI_CLI || 'false' }}
 
+  # 处理工单评论命令：/测试通过、/测试不通过、/已处理、/已解决
+  handle_command:
+    name: 处理工单命令
+    needs: [auto_assign]
+    runs-on: windows
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      !github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/')
+    steps:
+      - name: 解析命令并更新工单
+        shell: powershell
+        env:
+          SERVER: http://192.168.1.188:3000
+          TOKEN: ${{ secrets.GITEA_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.comment.body }}
+          AUTHOR: ${{ github.event.comment.user.login }}
+          TESTERS: ${{ vars.TESTERS }}
+          CMD_PASS: '/测试通过'
+          CMD_FAIL: '/测试不通过'
+          CMD_DONE1: '/已处理'
+          CMD_DONE2: '/已解决'
+          LABEL_PASS: '测试/通过'
+          LABEL_FAIL: '测试/不通过'
+          LABEL_DONE: '状态/已处理'
+          LABEL_DEV_PROCESSING: '状态/处理中'
+          LABEL_PENDING: '状态/待处理'
+          MSG_NEED_DONE: '(这个工单缺少「状态/已处理」标签，/测试* 命令暂不生效。)'
+          MSG_PR_OPEN: '(��＞＞﹏＜) 这个问题还没处理完呢～请等关联的 PR 合并后再测试吧。'
+          MSG_NEED_MERGE: '(๑•̀ㅂ•́)و 至少需要有人用 PR 合并，或回复评论 /已处理 来触发工单添加「状态/已处理」标签。'
+          MSG_TEST_OPEN_PR: '(・_・;) 提醒：本工单仍有未合并的 PR，代码可能尚未全部进入主线，测试结论请以此为准确认。'
+        run: |
+          # NOTE: keep the script body ASCII-only (comments included). Chinese only via env.
+          # PS 5.1 on the Windows runner reads this file as GB2312; non-ASCII in the body
+          # can corrupt tokens (backslash/brace) and break parsing.
+          $ErrorActionPreference = 'Stop'
+          try { [Console]::OutputEncoding = [Text.Encoding]::UTF8; chcp 65001 | Out-Null } catch {}
+
+          function Add-Label($name) {
+              if (-not $name) { return }
+              $id = $null
+              $owner = $repo.Split('/')[0]
+              foreach ($lp in @("/repos/$repo/labels", "/orgs/$owner/labels")) {
+                  if ($id) { break }
+                  $page = 1
+                  while ($true) {
+                      $lurl = "$server/api/v1$lp" + "?limit=50" + "&page=$page"
+                      try {
+                          $lr = Invoke-WebRequest -Method Get -Uri $lurl -Headers $auth -UseBasicParsing
+                      } catch { break }
+                      $larr = [Text.Encoding]::UTF8.GetString($lr.RawContentStream.ToArray()) | ConvertFrom-Json
+                      if (-not $larr) { break }
+                      $cnt = @($larr).Count
+                      if ($cnt -eq 0) { break }
+                      foreach ($l in $larr) { if ([string]$l.name -eq $name) { $id = $l.id; break } }
+                      if ($id -or ($cnt -lt 50)) { break }
+                      $page++
+                  }
+              }
+              if ($id) {
+                  $abody = @{ labels = @($id) } | ConvertTo-Json
+                  $abytes = [Text.Encoding]::UTF8.GetBytes($abody)
+                  try {
+                      Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/labels" -Headers $auth -Body $abytes -ContentType 'application/json; charset=utf-8' | Out-Null
+                      Write-Host "issue #$issue added label -> $name"
+                  } catch { Write-Host "add label $name failed: $_" }
+              } else {
+                  Write-Host "WARN: label not found in repo/org labels, skip add: $name"
+              }
+          }
+
+          $server = $env:SERVER.TrimEnd('/')
+          $token  = $env:TOKEN
+          $repo   = $env:REPO
+          $issue  = $env:ISSUE
+          $body   = $env:BODY.Trim()
+          $author = $env:AUTHOR
+          $pass   = $env:LABEL_PASS
+          $fail   = $env:LABEL_FAIL
+
+          if (-not $token) { Write-Error 'missing BOT_TOKEN'; exit 1 }
+
+          $done    = $env:LABEL_DONE
+          $devProc = $env:LABEL_DEV_PROCESSING
+          $pending = $env:LABEL_PENDING
+
+          $testGroup   = @($pass, $fail)
+          $statusGroup = @($pending, $devProc, $done)
+          $target = $null
+          $removeSet = @()
+          $extra = $null
+          $targetState = $null
+          $requireTester = $false
+          $requireDone = $false
+          if ($body.StartsWith($env:CMD_PASS)) {
+              $target = $pass; $removeSet = $testGroup; $targetState = 'closed'; $requireTester = $true; $requireDone = $true
+          } elseif ($body.StartsWith($env:CMD_FAIL)) {
+              $target = $fail; $removeSet = @($testGroup + $statusGroup); $extra = $pending; $targetState = 'open'; $requireTester = $true; $requireDone = $true
+          } elseif ($body.StartsWith($env:CMD_DONE1) -or $body.StartsWith($env:CMD_DONE2)) {
+              $target = $done; $removeSet = @($statusGroup + $testGroup); $targetState = 'open'; $requireTester = $false
+          } else {
+              Write-Host 'not a command, skip.'
+              exit 0
+          }
+
+          $testers = @()
+          if ($env:TESTERS) {
+              $testers = $env:TESTERS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          }
+          if ($requireTester -and $testers.Count -gt 0 -and ($testers -notcontains $author)) {
+              Write-Host "comment author '$author' not in TESTERS, skip."
+              exit 0
+          }
+
+          $auth = @{ Authorization = "token $token" }
+
+          $resp = Invoke-WebRequest -Method Get -Uri "$server/api/v1/repos/$repo/issues/$issue" `
+              -Headers $auth -UseBasicParsing
+          $issueObj = [Text.Encoding]::UTF8.GetString($resp.RawContentStream.ToArray()) | ConvertFrom-Json
+
+          $names = @()
+          if ($issueObj.labels) { $names = @($issueObj.labels | ForEach-Object { [string]$_.name }) }
+
+          $hasOpenPR = $false
+          $openPrNums = @()
+          if ($requireDone) {
+              $pullsUri = "$server/api/v1/repos/$repo/pulls?state=open" + "&limit=50"
+              try {
+                  $prResp = Invoke-WebRequest -Method Get -Uri $pullsUri -Headers $auth -UseBasicParsing
+                  $prs = [Text.Encoding]::UTF8.GetString($prResp.RawContentStream.ToArray()) | ConvertFrom-Json
+                  $refPattern = '(^|[^0-9])#' + $issue + '([^0-9]|$)'
+                  foreach ($pr in $prs) {
+                      $b = [string]$pr.body
+                      if ($b -match $refPattern) { $hasOpenPR = $true; $openPrNums += $pr.number }
+                  }
+              } catch { Write-Host "check open PR failed: $_" }
+          }
+
+          if ($requireDone -and ($names -notcontains $done)) {
+              $msg = $env:MSG_NEED_DONE
+              if ($hasOpenPR) { $msg = $msg + "`n" + $env:MSG_PR_OPEN }
+              else { $msg = $msg + "`n" + $env:MSG_NEED_MERGE }
+              $msg = "@$author`r`n" + $msg
+
+              $cjson  = @{ body = $msg } | ConvertTo-Json -Depth 5
+              $cbytes = [Text.Encoding]::UTF8.GetBytes($cjson)
+              Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" `
+                  -Headers $auth -Body $cbytes -ContentType 'application/json; charset=utf-8' | Out-Null
+              Write-Host "issue #$issue missing done label, test command rejected (hasOpenPR=$hasOpenPR)."
+              exit 0
+          }
+
+          if ($issueObj.labels) {
+              foreach ($lb in $issueObj.labels) {
+                  $ln = [string]$lb.name
+                  if (($removeSet -contains $ln) -and ($ln -ne $target)) {
+                      try {
+                          Invoke-RestMethod -Method Delete `
+                              -Uri "$server/api/v1/repos/$repo/issues/$issue/labels/$($lb.id)" `
+                              -Headers $auth | Out-Null
+                          Write-Host "removed label '$ln' (id $($lb.id))"
+                      } catch { Write-Host "remove label '$ln' skipped: $_" }
+                  }
+              }
+          }
+
+          $names = @($issueObj.labels | ForEach-Object { [string]$_.name } | Where-Object { ($_ -eq $target) -or ($removeSet -notcontains $_) })
+
+          if ($names -contains $target) {
+              Write-Host "issue #$issue already has target label, nothing to add."
+          } else {
+              Add-Label $target
+          }
+
+          if ($extra -and ($names -notcontains $extra)) {
+              Add-Label $extra
+          }
+
+          if ($targetState) {
+              $sjson = @{ state = $targetState } | ConvertTo-Json
+              $sbytes = [Text.Encoding]::UTF8.GetBytes($sjson)
+              try {
+                  Invoke-RestMethod -Method Patch -Uri "$server/api/v1/repos/$repo/issues/$issue" -Headers $auth -Body $sbytes -ContentType 'application/json; charset=utf-8' | Out-Null
+                  Write-Host "issue #$issue state set to $targetState"
+              } catch { Write-Host "set issue state failed: $_" }
+          }
+
+          if ($requireDone -and $hasOpenPR) {
+              $wmsg = $env:MSG_TEST_OPEN_PR
+              if ($openPrNums.Count -gt 0) { $wmsg = $wmsg + " (PR #" + ($openPrNums -join ', #') + ")" }
+              $wmsg = "@$author`r`n" + $wmsg
+              $wjson  = @{ body = $wmsg } | ConvertTo-Json -Depth 5
+              $wbytes = [Text.Encoding]::UTF8.GetBytes($wjson)
+              Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" `
+                  -Headers $auth -Body $wbytes -ContentType 'application/json; charset=utf-8' | Out-Null
+              Write-Host "warned: open PR still references issue #$issue (PR $($openPrNums -join ','))."
+          }
+
   # 新建工单欢迎提示：固定文案，引导使用 /测试通过、/已处理 等命令
   issue_welcome:
     name: 工单创建提示
@@ -150,9 +358,10 @@ jobs:
         shell: powershell
         env:
           SERVER: http://192.168.1.188:3000
-          TOKEN: ${{ secrets.BOT_TOKEN }}
+          TOKEN: ${{ secrets.GITEA_TOKEN }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ github.event.issue.number }}
+          CREATOR: ${{ github.event.issue.user.login }}
           # 中文走 env，脚本体保持 ASCII 以兼容 Windows runner
           WELCOME_MSG: |
             **请创建 PR 并在正文中关联本工单，复制工单右下角的 `工单码` 引用到 PR 正文中。**
@@ -161,12 +370,14 @@ jobs:
             - `/测试通过`：标记测试通过
             - `/测试不通过`：标记测试不通过
             - `/已处理` 或 `/已解决`：标记为已处理(建议能够通过代码解决的，尽量通过PR来自动化处理)
+            - `@ai 你的问题`：让 AI 去处理（需输入小写 `@ai`）
         run: |
           $ErrorActionPreference = 'Stop'
           $server = $env:SERVER.TrimEnd('/')
           $repo = $env:REPO
           $issue = $env:ISSUE
-          $body = $env:WELCOME_MSG
+          $creator = $env:CREATOR
+          $body = "@$creator`r`n`r`n" + $env:WELCOME_MSG
           $token = $env:TOKEN
           $json = @{ body = $body } | ConvertTo-Json -Depth 5
           $bytes = [Text.Encoding]::UTF8.GetBytes($json)
@@ -212,6 +423,7 @@ jobs:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/wechat-notify@main
         with:
           webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
-          bot-token: ${{ secrets.BOT_TOKEN }}
+          # 通知用 GITEA_TOKEN
+          bot-token: ${{ secrets.GITEA_TOKEN }}
           msgtype: text
           user-map: ${{ vars.WECHAT_USERMAP }}
