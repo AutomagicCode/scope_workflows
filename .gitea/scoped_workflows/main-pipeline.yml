@@ -13,7 +13,8 @@ on:
   pull_request_review:
     types: [submitted, edited, dismissed]
   issues:
-    types: [opened, edited, assigned, labeled, unlabeled, closed, reopened]
+    # 不监听 labeled/unlabeled：打标签由本工作流自己完成，避免 bot 用 PAT 打标签反向触发形成循环
+    types: [opened, edited, assigned, closed, reopened]
   issue_comment:
     types: [created]
   release:
@@ -58,7 +59,7 @@ jobs:
       - name: 读取分支保护并自动指定评审人
         shell: powershell
         env:
-          GITEA_TOKEN: ${{ secrets.BOT_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           REPO_FULL: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.base_ref }}
@@ -70,7 +71,7 @@ jobs:
           $branch = $env:BASE_REF
           $encodedBranch = [System.Uri]::EscapeDataString($branch)
           $ruleUrl = "$apiBase/branch_protections/$encodedBranch"
-          $headers = @{ Authorization = "token $env:GITEA_TOKEN" }
+          $headers = @{ Authorization = "token $env:BOT_TOKEN" }
           try {
             $rule = Invoke-RestMethod -Uri $ruleUrl -Headers $headers -Method GET
           } catch {
@@ -132,6 +133,7 @@ jobs:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
         with:
           gitea-token: ${{ secrets.BOT_TOKEN }}
+          bot-token: ${{ secrets.BOT_TOKEN }}
           api-key: ${{ secrets.AI_API_KEY }}
           # AI 服务地址、模型、上下文长度放仓库变量里，切换 AI 时不需改代码
           api-base: ${{ vars.AI_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }}
