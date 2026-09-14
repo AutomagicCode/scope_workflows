@@ -138,6 +138,42 @@ jobs:
           max-diff-chars: ${{ vars.AI_MAX_DIFF_CHARS || '24000' }}
           use-gemini-cli: ${{ vars.AI_USE_GEMINI_CLI || 'false' }}
 
+  # 新建工单欢迎提示：固定文案，引导使用 /测试通过、/已处理 等命令
+  issue_welcome:
+    name: 工单创建提示
+    needs: [auto_assign]
+    runs-on: windows
+    if: >
+      github.event_name == 'issues' && github.event.action == 'opened'
+    steps:
+      - name: 发布固定提示
+        shell: powershell
+        env:
+          SERVER: http://192.168.1.188:3000
+          TOKEN: ${{ secrets.BOT_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          # 中文走 env，脚本体保持 ASCII 以兼容 Windows runner
+          WELCOME_MSG: |
+            **请创建 PR 并在正文中关联本工单，复制工单右下角的 `工单码` 引用到 PR 正文中。**
+
+            **也可在评论中使用以下命令更新状态：**
+            - `/测试通过`：标记测试通过
+            - `/测试不通过`：标记测试不通过
+            - `/已处理` 或 `/已解决`：标记为已处理(建议能够通过代码解决的，尽量通过PR来自动化处理)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $server = $env:SERVER.TrimEnd('/')
+          $repo = $env:REPO
+          $issue = $env:ISSUE
+          $body = $env:WELCOME_MSG
+          $token = $env:TOKEN
+          $json = @{ body = $body } | ConvertTo-Json -Depth 5
+          $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+          $headers = @{ Authorization = "token $token" }
+          Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" -Headers $headers -Body $bytes -ContentType 'application/json; charset=utf-8' | Out-Null
+          Write-Host "Posted welcome comment to issue #$issue"
+
   # PR 代码审核：非 WIP 的 PR 在 build 成功后自动分析
   ai_review_pr:
     name: AI 审核与工单处理
