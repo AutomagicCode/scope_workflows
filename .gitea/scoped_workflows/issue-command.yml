@@ -2,11 +2,13 @@ name: 测试评论命令
 
 # 在工单评论区输入命令，由 bot 账号代为切换标签（无需工单写权限）：
 #   /测试通过   → 打「测试/通过」标签（auto-assign 随后自动关闭工单）
-#   /测试不通过 → 打「测试/不通过」标签（auto-assign 随后自动恢复打开工单）
-#   /已处理 或 /已解决 → 打「开发/已处理」标签（互斥移除「开发/处理中」）
+#   /测试不通过 → 打「测试/不通过」标签（auto-assign 随后进度退回 状态/待处理 并恢复打开工单）
+#   /已处理 或 /已解决 → 打「状态/已处理」标签（同时清空 测试/ 组）
+# 两个维度：进度组「状态/」与测试组「测试/」，组内互斥、组间可并存。
+#   测试命令只动 测试/ 组；/已处理 置进度为 状态/已处理 并清 测试/ 组。
 # 权限：测试命令仅当 vars.TESTERS 配置且非空时才限名单内；为空则任何人可用。
 #       /已处理、/已解决 任何人均可用。
-# 前置条件：/测试通过、/测试不通过 仅当工单已具备「开发/已处理」标签时才生效；
+# 前置条件：/测试通过、/测试不通过 仅当工单已具备「状态/已处理」标签时才生效；
 #       否则不改标签，bot 回复提示（仍有未合并 PR → 还没处理完；否则 → 需合并 PR 或评论 /已处理）。
 # 说明：所有中文均通过 env 传入，API 响应强制 UTF-8 解码，脚本体不含中文字面量，
 #       以兼容 Gitea act_runner 在 Windows PowerShell 5.1（GB2312 控制台）下的编码限制。
@@ -39,12 +41,13 @@ jobs:
           CMD_DONE2: '/已解决'
           LABEL_PASS: '测试/通过'
           LABEL_FAIL: '测试/不通过'
-          LABEL_DONE: '开发/已处理'
-          LABEL_DEV_PROCESSING: '开发/处理中'
-          # 测试命令缺少「开发/已处理」时 bot 的回复文案（走 env 避免 GB2312 乱码）
-          MSG_NEED_DONE: '(这个工单缺少「开发/已处理」标签，/测试* 命令暂不生效。)'
+          LABEL_DONE: '状态/已处理'
+          LABEL_DEV_PROCESSING: '状态/处理中'
+          LABEL_PENDING: '状态/待处理'
+          # 测试命令缺少「状态/已处理」时 bot 的回复文案（走 env 避免 GB2312 乱码）
+          MSG_NEED_DONE: '(这个工单缺少「状态/已处理」标签，/测试* 命令暂不生效。)'
           MSG_PR_OPEN: '(＞﹏＜) 这个问题还没处理完呢～请等关联的 PR 合并后再测试吧。'
-          MSG_NEED_MERGE: '(๑•̀ㅂ•́)و 至少需要有人用 PR 合并，或回复评论 /已处理 来触发工单添加「开发/已处理」标签。'
+          MSG_NEED_MERGE: '(๑•̀ㅂ•́)و 至少需要有人用 PR 合并，或回复评论 /已处理 来触发工单添加「状态/已处理」标签。'
           # 测试命令已执行，但本工单仍有未合并 PR 时的提醒（仅提醒，不拦截）
           MSG_TEST_OPEN_PR: '(・_・;) 提醒：本工单仍有未合并的 PR，代码可能尚未全部进入主线，测试结论请以此为准确认。'
         run: |
@@ -67,21 +70,26 @@ jobs:
 
           $done    = $env:LABEL_DONE
           $devProc = $env:LABEL_DEV_PROCESSING
+          $pending = $env:LABEL_PENDING
 
           # Match command (keywords come from env, no Chinese literals).
-          # $removeSet: mutually-exclusive labels to strip before adding target.
+          # Two dimensions: test group (pass/fail) and progress group (pending/processing/done).
+          # Test commands touch only the test group; /done sets progress to "done" and also
+          # clears the whole test group (a re-handled issue waits for a fresh test result).
           # $requireTester: whether the command is limited to the TESTERS list.
           # $requireDone: test commands (pass/fail) require the "done" label first.
+          $testGroup   = @($pass, $fail)
+          $statusGroup = @($pending, $devProc, $done)
           $target = $null
           $removeSet = @()
           $requireTester = $false
           $requireDone = $false
           if ($body.StartsWith($env:CMD_PASS)) {
-              $target = $pass; $removeSet = @($pass, $fail); $requireTester = $true; $requireDone = $true
+              $target = $pass; $removeSet = $testGroup; $requireTester = $true; $requireDone = $true
           } elseif ($body.StartsWith($env:CMD_FAIL)) {
-              $target = $fail; $removeSet = @($pass, $fail); $requireTester = $true; $requireDone = $true
+              $target = $fail; $removeSet = $testGroup; $requireTester = $true; $requireDone = $true
           } elseif ($body.StartsWith($env:CMD_DONE1) -or $body.StartsWith($env:CMD_DONE2)) {
-              $target = $done; $removeSet = @($devProc, $done); $requireTester = $false
+              $target = $done; $removeSet = @($statusGroup + $testGroup); $requireTester = $false
           } else {
               Write-Host 'not a command, skip.'
               exit 0

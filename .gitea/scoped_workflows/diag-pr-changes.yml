@@ -1,0 +1,33 @@
+name: 诊断-PR编辑changes
+
+# 临时诊断工作流：在 PR 被编辑时，打印 github.event.changes，
+# 用于确认 Gitea runner 是否提供 changes.body.from（PR 正文编辑前的旧值）。
+# 用于验证「PR 改动前后工单码变动自动处理」功能是否可行。确认后可删除本文件。
+
+on:
+  pull_request:
+    types: [edited]
+
+jobs:
+  diag:
+    name: 打印 PR 编辑 changes
+    runs-on: windows
+    steps:
+      - name: dump changes
+        shell: powershell
+        env:
+          # 全部通过 env 传入，避免脚本体出现中文/引号导致的解析问题
+          CHANGES: ${{ toJSON(github.event.changes) }}
+          BODY_FROM: ${{ github.event.changes.body.from }}
+          NEW_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          Write-Host "=== github.event.changes (full) ==="
+          Write-Host $env:CHANGES
+          Write-Host "=== changes.body.from (old PR body) ==="
+          if ([string]::IsNullOrEmpty($env:BODY_FROM)) {
+              Write-Host "<EMPTY> -> body.from NOT available on this Gitea runner"
+          } else {
+              Write-Host $env:BODY_FROM
+          }
+          Write-Host "=== current PR body ==="
+          Write-Host $env:NEW_BODY

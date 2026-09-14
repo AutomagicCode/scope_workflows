@@ -1,16 +1,17 @@
 name: 工单自动管理
 
 # 包括自动指派测试人员
-# PR 关联工单（正文用 refs #N）→ 工单置「开发/处理中」
-# PR 合并后 → 工单置「开发/已处理」并轮派测试组成员
+# 工单新建 → 默认打上「状态/待处理」（若尚无任何 状态/ 标签）
+# PR 关联工单（正文用 refs #N）→ 工单置「状态/处理中」（并清测试组）
+# PR 合并后 → 工单置「状态/已处理」（并清测试组）并轮派测试组成员
 # 工单打「测试/通过」→ 关闭工单
-# 工单打「测试/不通过」→ 恢复打开工单
+# 工单打「测试/不通过」→ 进度退回「状态/待处理」并恢复打开工单
 
 on:
   pull_request:
     types: [opened, edited, reopened, closed]
   issues:
-    types: [labeled, unlabeled]
+    types: [opened, labeled, unlabeled]
 
 jobs:
   auto_assign:
@@ -24,12 +25,15 @@ jobs:
           # 测试组成员 login，逗号分隔，配置在仓库变量 vars.TESTERS
           testers: ${{ vars.TESTERS }}
 
-          # 标签分组：开发/ 由 PR 生命周期自动切换；测试/ 由测试人员评论命令触发
-          label-processing: '开发/处理中'
-          label-testing: '开发/已处理'
+          # 两个维度：进度组「状态/」(待处理/处理中/已处理) 与 测试组「测试/」(通过/不通过)。
+          # 组内互斥、组间可并存。工单新建默认待处理；PR 生命周期切换进度；
+          # 测试通过/不通过由测试人员评论命令触发。
+          label-pending: '状态/待处理'
+          label-processing: '状态/处理中'
+          label-testing: '状态/已处理'
           label-test-pass: '测试/通过'
           label-test-fail: '测试/不通过'
-          # 「无状态」= 不含任何 开发/ 测试/ 标签；无需单独 label，留空即可
+          # 「无状态」= 不含任何 状态/ 标签；无需单独 label，留空即可
           label-none: ''
 
   request_reviewers:
