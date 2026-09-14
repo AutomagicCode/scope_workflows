@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/auto-assign@main
         with:
-          gitea-token: ${{ secrets.BOT_TOKEN }}
+          bot-token: ${{ secrets.BOT_TOKEN }}
           testers: ${{ vars.TESTERS }}
           label-pending: '状态/待处理'
           label-processing: '状态/处理中'
@@ -118,21 +118,26 @@ jobs:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/build-template@main
         with:
           release-target: ${{ github.event.inputs.release_target }}
-          release-token: ${{ secrets.BOT_TOKEN }}
+          bot-token: ${{ secrets.BOT_TOKEN }}
 
   ai_process:
     name: AI 审核与工单处理
-    needs: [auto_assign]
+    needs: [auto_assign, build]
     runs-on: windows
+    # build 成功或被跳过（工单/评论/review 事件不跑 build）才继续；build 失败则不做 AI 分析
     if: >
-      (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')) ||
-      (github.event_name == 'pull_request_review' && (github.event.action == 'submitted' || github.event.action == 'edited')) ||
-      (github.event_name == 'issues' && (github.event.action == 'opened' || github.event.action == 'edited' || github.event.action == 'assigned')) ||
-      (github.event_name == 'issue_comment' && github.event.action == 'created')
+      !cancelled() &&
+      needs.auto_assign.result == 'success' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped') &&
+      (
+        (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')) ||
+        (github.event_name == 'pull_request_review' && (github.event.action == 'submitted' || github.event.action == 'edited')) ||
+        (github.event_name == 'issues' && (github.event.action == 'opened' || github.event.action == 'edited' || github.event.action == 'assigned')) ||
+        (github.event_name == 'issue_comment' && github.event.action == 'created')
+      )
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
         with:
-          gitea-token: ${{ secrets.BOT_TOKEN }}
           bot-token: ${{ secrets.BOT_TOKEN }}
           api-key: ${{ secrets.AI_API_KEY }}
           # AI 服务地址、模型、上下文长度放仓库变量里，切换 AI 时不需改代码
@@ -156,6 +161,6 @@ jobs:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/wechat-notify@main
         with:
           webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
-          token: ${{ secrets.BOT_TOKEN }}
+          bot-token: ${{ secrets.BOT_TOKEN }}
           msgtype: text
           user-map: ${{ vars.WECHAT_USERMAP }}

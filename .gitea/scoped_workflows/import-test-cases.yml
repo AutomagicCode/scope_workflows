@@ -35,7 +35,7 @@ jobs:
       - name: 导入测试用例
         uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/import-test-cases@main
         with:
-          gitea-token: ${{ secrets.BOT_TOKEN }}
+          bot-token: ${{ secrets.BOT_TOKEN }}
           target-repo: ${{ github.repository }}
           excel-file: ${{ github.event.inputs.excel_file }}
           dry-run: ${{ github.event.inputs.dry_run }}
