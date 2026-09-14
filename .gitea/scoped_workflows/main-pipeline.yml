@@ -133,6 +133,9 @@ jobs:
         with:
           gitea-token: ${{ secrets.BOT_TOKEN }}
           api-key: ${{ secrets.AI_API_KEY }}
+          # AI 服务地址和模型放仓库变量里，切换 AI 时不需改代码
+          api-base: ${{ vars.AI_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }}
+          model: ${{ vars.AI_MODEL || 'glm-4-flash' }}
 
   notify:
     name: 企业微信通知
