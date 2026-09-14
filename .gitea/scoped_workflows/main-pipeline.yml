@@ -120,21 +120,36 @@ jobs:
           release-target: ${{ github.event.inputs.release_target }}
           bot-token: ${{ secrets.BOT_TOKEN }}
 
-  ai_process:
+  # 工单 / 评论 / PR 审核意见处理：不涉及 build，仅依赖 auto_assign
+  ai_issue:
+    name: AI 工单与评论处理
+    needs: [auto_assign]
+    runs-on: windows
+    if: >
+      (github.event_name == 'pull_request_review' && (github.event.action == 'submitted' || github.event.action == 'edited')) ||
+      (github.event_name == 'issue_comment' && github.event.action == 'created' && contains(github.event.comment.body, '@ai'))
+    steps:
+      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
+        with:
+          bot-token: ${{ secrets.BOT_TOKEN }}
+          api-key: ${{ secrets.AI_API_KEY }}
+          api-base: ${{ vars.AI_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }}
+          model: ${{ vars.AI_MODEL || 'glm-4-flash' }}
+          max-diff-chars: ${{ vars.AI_MAX_DIFF_CHARS || '24000' }}
+          use-gemini-cli: ${{ vars.AI_USE_GEMINI_CLI || 'false' }}
+
+  # PR 代码审核：非 WIP 的 PR 在 build 成功后自动分析
+  ai_review_pr:
     name: AI 审核与工单处理
     needs: [auto_assign, build]
     runs-on: windows
-    # build 成功或被跳过（工单/评论/review 事件不跑 build）才继续；build 失败则不做 AI 分析
     if: >
-      !cancelled() &&
-      needs.auto_assign.result == 'success' &&
-      (needs.build.result == 'success' || needs.build.result == 'skipped') &&
-      (
-        (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')) ||
-        (github.event_name == 'pull_request_review' && (github.event.action == 'submitted' || github.event.action == 'edited')) ||
-        (github.event_name == 'issues' && (github.event.action == 'opened' || github.event.action == 'edited' || github.event.action == 'assigned')) ||
-        (github.event_name == 'issue_comment' && github.event.action == 'created')
-      )
+      github.event_name == 'pull_request' &&
+      (github.event.action == 'opened' || github.event.action == 'synchronize') &&
+      !contains(github.event.pull_request.title, '[WIP]') &&
+      !contains(github.event.pull_request.title, 'WIP:') &&
+      !contains(github.event.pull_request.title, 'Draft:') &&
+      !contains(github.event.pull_request.title, '[Draft]')
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
         with:
