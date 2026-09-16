@@ -361,7 +361,6 @@ jobs:
           TOKEN: ${{ secrets.GITEA_TOKEN }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ github.event.issue.number }}
-          CREATOR: ${{ github.event.issue.user.login }}
           # 中文走 env，脚本体保持 ASCII 以兼容 Windows runner
           WELCOME_MSG: |
             **请创建 PR 并在正文中关联本工单，复制工单右下角的 `工单码` 引用到 PR 正文中。**
@@ -376,8 +375,7 @@ jobs:
           $server = $env:SERVER.TrimEnd('/')
           $repo = $env:REPO
           $issue = $env:ISSUE
-          $creator = $env:CREATOR
-          $body = "@$creator`r`n`r`n" + $env:WELCOME_MSG
+          $body = $env:WELCOME_MSG
           $token = $env:TOKEN
           $json = @{ body = $body } | ConvertTo-Json -Depth 5
           $bytes = [Text.Encoding]::UTF8.GetBytes($json)
