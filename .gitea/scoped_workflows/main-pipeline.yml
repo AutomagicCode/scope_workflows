@@ -181,7 +181,11 @@ jobs:
           MSG_NEED_MERGE: '(๑•̀ㅂ•́)و 至少需要有人用 PR 合并，或回复评论 /已处理 来触发工单添加「状态/已处理」标签。'
           MSG_TEST_OPEN_PR: '(・_・;) 提醒：本工单仍有未合并的 PR，代码可能尚未全部进入主线，测试结论请以此为准确认。'
           MSG_TC_NEED_BUGS: '(・_・;) 该测试用例仍有未通过的关联缺陷，请先处理后再评论 /测试通过：'
-          MSG_TC_PENDING: '(・_・;) 已记录该缺陷测试通过，但关联的测试用例还有未通过的缺陷，暂不关闭该用例：'
+          MSG_TC_PENDING_HEAD: '(・_・;) 已记录缺陷'
+          MSG_TC_PENDING_MID: '测试通过，但关联测试用例'
+          MSG_TC_PENDING_TAIL: '仍有未通过的缺陷，暂不关闭该用例：'
+          MSG_CLOSE_PASS: '(・_・)b 已确认测试通过，自动关闭本工单。'
+          MSG_TC_CLOSE_ALLPASS: '(・_・)b 关联的缺陷均已测试通过，自动关闭本测试用例。'
         run: |
           # NOTE: keep the script body ASCII-only (comments included). Chinese only via env.
           # PS 5.1 on the Windows runner reads this file as GB2312; non-ASCII in the body
@@ -249,6 +253,14 @@ jobs:
               # Test cases do not join status/ transitions; do not add the pending label to them.
               if ($extra -and (-not $syncIsTestCase) -and ($cur -notcontains $extra)) { Add-Label $extra $inum }
               if ($targetState) {
+                  # When closing a synced test case, post a close-reason comment first.
+                  if ($targetState -eq 'closed') {
+                      $scj = @{ body = $env:MSG_TC_CLOSE_ALLPASS } | ConvertTo-Json -Depth 5
+                      $scb = [Text.Encoding]::UTF8.GetBytes($scj)
+                      try {
+                          Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$inum/comments" -Headers $auth -Body $scb -ContentType 'application/json; charset=utf-8' | Out-Null
+                      } catch { Write-Host "sync: close reason comment on #$inum failed: $_" }
+                  }
                   $sj = @{ state = $targetState } | ConvertTo-Json
                   $sb = [Text.Encoding]::UTF8.GetBytes($sj)
                   try {
@@ -428,6 +440,15 @@ jobs:
           }
 
           if ($targetState) {
+              # Post a comment explaining the close reason before closing.
+              if ($targetState -eq 'closed') {
+                  $ccmsg = "@$author`r`n" + $env:MSG_CLOSE_PASS
+                  $ccj = @{ body = $ccmsg } | ConvertTo-Json -Depth 5
+                  $ccb = [Text.Encoding]::UTF8.GetBytes($ccj)
+                  try {
+                      Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" -Headers $auth -Body $ccb -ContentType 'application/json; charset=utf-8' | Out-Null
+                  } catch { Write-Host "close reason comment failed: $_" }
+              }
               $sjson = @{ state = $targetState } | ConvertTo-Json
               $sbytes = [Text.Encoding]::UTF8.GetBytes($sjson)
               try {
@@ -469,12 +490,14 @@ jobs:
                       # Pass: close the test case only when ALL its linked bugs passed.
                       $pend = @()
                       foreach ($bg in (Get-LinkedBugs $tc)) {
+                          # This bug just passed; do not count it as unpassed.
+                          if ([int]$bg.number -eq [int]$issue) { continue }
                           if (-not (Has-Label $bg $pass)) { $pend += ('`#' + [string]$bg.number + '`') }
                       }
                       if ($pend.Count -eq 0) {
                           Sync-Issue $tc
                       } else {
-                          $pmsg = "@$author`r`n" + $env:MSG_TC_PENDING + ' ' + ($pend -join ' ')
+                          $pmsg = "@$author`r`n" + $env:MSG_TC_PENDING_HEAD + ' `#' + [string]$issue + '` ' + $env:MSG_TC_PENDING_MID + ' `#' + [string]$tc + '` ' + $env:MSG_TC_PENDING_TAIL + ' ' + ($pend -join ' ')
                           $pj = @{ body = $pmsg } | ConvertTo-Json -Depth 5
                           $pb = [Text.Encoding]::UTF8.GetBytes($pj)
                           try {
@@ -515,7 +538,7 @@ jobs:
 
             - `@ai 你的问题`：让 AI 去处理（需输入小写 `@ai`）
           WELCOME_MSG_TESTCASE: |
-            **这是一条测试用例工单。待关联的BUG工单处理完成后进行测试，可在下面评论更新结果：**
+            **这是一条测试用例工单。关联的缺陷BUG工单全部被标记为测试通过会自动以测试通过状态关闭该工单；或者进行测试后，在下面评论更新结果：**
             - `/测试通过`：bot自动标记 测试通过 并关闭本用例
             - `/测试不通过`：bot自动标记 测试不通过（请另建缺陷工单，并在缺陷正文关联本用例编号）
         run: |

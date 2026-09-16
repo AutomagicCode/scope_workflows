@@ -18,7 +18,7 @@ on:
       create_summary:
         description: '是否创建汇总工单（true/false）'
         required: true
-        default: 'true'
+        default: 'false'
       summary_title:
         description: '汇总工单标题'
         required: false
