@@ -384,7 +384,7 @@ jobs:
           if ($isTestCase -and ($target -eq $pass)) {
               $pend = @()
               foreach ($bg in (Get-LinkedBugs $issue)) {
-                  if (-not (Has-Label $bg $pass)) { $pend += ('#' + $bg.number) }
+                  if (-not (Has-Label $bg $pass)) { $pend += ('`#' + [string]$bg.number + '`') }
               }
               if ($pend.Count -gt 0) {
                   $rmsg = "@$author`r`n" + $env:MSG_TC_NEED_BUGS + ' ' + ($pend -join ' ')
@@ -465,7 +465,7 @@ jobs:
                       # Pass: close the test case only when ALL its linked bugs passed.
                       $pend = @()
                       foreach ($bg in (Get-LinkedBugs $tc)) {
-                          if (-not (Has-Label $bg $pass)) { $pend += ('#' + $bg.number) }
+                          if (-not (Has-Label $bg $pass)) { $pend += ('`#' + [string]$bg.number + '`') }
                       }
                       if ($pend.Count -eq 0) {
                           Sync-Issue $tc
@@ -498,6 +498,8 @@ jobs:
           TOKEN: ${{ secrets.GITEA_TOKEN }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ github.event.issue.number }}
+          # 测试用例工单不走 PR 解决流程，用单独的提示文案
+          LABEL_TESTCASE: '类型/测试用例'
           # 中文走 env，脚本体保持 ASCII 以兼容 Windows runner
           WELCOME_MSG: |
             **请负责处理该工单的人，创建 PR 解决该工单。 并在`PR的正文`中关联本工单：复制工单右下角的 `工单码` 引用到 PR 正文中。**
@@ -508,16 +510,30 @@ jobs:
             - `/已处理` 或 `/已解决`：bot自动标记为 已处理(能够通过代码解决的，尽量通过建PR来关联处理)
 
             - `@ai 你的问题`：让 AI 去处理（需输入小写 `@ai`）
+          WELCOME_MSG_TESTCASE: |
+            **这是一条测试用例工单。测试完成后，可在下面评论更新结果：**
+            - `/测试通过`：bot自动标记 测试通过 并关闭本用例
+            - `/测试不通过`：bot自动标记 测试不通过（请另建缺陷工单，并在缺陷正文关联本用例编号）
         run: |
           $ErrorActionPreference = 'Stop'
           $server = $env:SERVER.TrimEnd('/')
           $repo = $env:REPO
           $issue = $env:ISSUE
-          $body = $env:WELCOME_MSG
           $token = $env:TOKEN
+          $headers = @{ Authorization = "token $token" }
+
+          # Test-case issues get a tailored message (no PR-based resolution guidance).
+          $body = $env:WELCOME_MSG
+          try {
+              $ir = Invoke-WebRequest -Method Get -Uri "$server/api/v1/repos/$repo/issues/$issue" -Headers $headers -UseBasicParsing
+              $iobj = [Text.Encoding]::UTF8.GetString($ir.RawContentStream.ToArray()) | ConvertFrom-Json
+              $lnames = @()
+              if ($iobj.labels) { $lnames = @($iobj.labels | ForEach-Object { [string]$_.name }) }
+              if ($lnames -contains $env:LABEL_TESTCASE) { $body = $env:WELCOME_MSG_TESTCASE }
+          } catch { Write-Host "check issue type failed, using default welcome: $_" }
+
           $json = @{ body = $body } | ConvertTo-Json -Depth 5
           $bytes = [Text.Encoding]::UTF8.GetBytes($json)
-          $headers = @{ Authorization = "token $token" }
           Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" -Headers $headers -Body $bytes -ContentType 'application/json; charset=utf-8' | Out-Null
           Write-Host "Posted welcome comment to issue #$issue"
 
