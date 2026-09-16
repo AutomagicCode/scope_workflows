@@ -177,7 +177,7 @@ jobs:
           LABEL_PENDING: '状态/待处理'
           LABEL_TESTCASE: '类型/测试用例'
           MSG_NEED_DONE: '(这个工单缺少「状态/已处理」标签，/测试* 命令暂不生效。)'
-          MSG_PR_OPEN: '(��＞＞﹏＜) 这个问题还没处理完呢～请等关联的 PR 合并后再测试吧。'
+          MSG_PR_OPEN: '(>﹏<) 这个问题还没处理完呢～请等关联的 PR 合并后再测试吧。'
           MSG_NEED_MERGE: '(๑•̀ㅂ•́)و 至少需要有人用 PR 合并，或回复评论 /已处理 来触发工单添加「状态/已处理」标签。'
           MSG_TEST_OPEN_PR: '(・_・;) 提醒：本工单仍有未合并的 PR，代码可能尚未全部进入主线，测试结论请以此为准确认。'
           MSG_TC_NEED_BUGS: '(・_・;) 该测试用例仍有未通过的关联缺陷，请先处理后再评论 /测试通过：'
@@ -246,7 +246,7 @@ jobs:
               if ($obj.labels) { $cur = @($obj.labels | ForEach-Object { [string]$_.name }) }
               $syncIsTestCase = (Has-Label $obj $env:LABEL_TESTCASE)
               if ($cur -notcontains $target) { Add-Label $target $inum }
-              # 测试用例不参与 状态/ 流转，propagate 时不给它加「状态/待处理」
+              # Test cases do not join status/ transitions; do not add the pending label to them.
               if ($extra -and (-not $syncIsTestCase) -and ($cur -notcontains $extra)) { Add-Label $extra $inum }
               if ($targetState) {
                   $sj = @{ state = $targetState } | ConvertTo-Json
@@ -421,8 +421,8 @@ jobs:
               Add-Label $target
           }
 
-          # $extra 是 /测试不通过 时退回的「状态/待处理」，只对 bug/需求 有意义；
-          # 测试用例不参与 状态/ 流转，不加。
+          # $extra is the pending status pushed back by /test-fail; only meaningful for bugs/features.
+          # Test cases do not join status/ transitions, so skip it.
           if ($extra -and (-not $isTestCase) -and ($names -notcontains $extra)) {
               Add-Label $extra
           }
@@ -515,7 +515,7 @@ jobs:
 
             - `@ai 你的问题`：让 AI 去处理（需输入小写 `@ai`）
           WELCOME_MSG_TESTCASE: |
-            **这是一条测试用例工单。测试完成后，可在下面评论更新结果：**
+            **这是一条测试用例工单。待关联的BUG工单处理完成后进行测试，可在下面评论更新结果：**
             - `/测试通过`：bot自动标记 测试通过 并关闭本用例
             - `/测试不通过`：bot自动标记 测试不通过（请另建缺陷工单，并在缺陷正文关联本用例编号）
         run: |
