@@ -244,8 +244,10 @@ jobs:
               }
               $cur = @()
               if ($obj.labels) { $cur = @($obj.labels | ForEach-Object { [string]$_.name }) }
+              $syncIsTestCase = (Has-Label $obj $env:LABEL_TESTCASE)
               if ($cur -notcontains $target) { Add-Label $target $inum }
-              if ($extra -and ($cur -notcontains $extra)) { Add-Label $extra $inum }
+              # 测试用例不参与 状态/ 流转，propagate 时不给它加「状态/待处理」
+              if ($extra -and (-not $syncIsTestCase) -and ($cur -notcontains $extra)) { Add-Label $extra $inum }
               if ($targetState) {
                   $sj = @{ state = $targetState } | ConvertTo-Json
                   $sb = [Text.Encoding]::UTF8.GetBytes($sj)
@@ -419,7 +421,9 @@ jobs:
               Add-Label $target
           }
 
-          if ($extra -and ($names -notcontains $extra)) {
+          # $extra 是 /测试不通过 时退回的「状态/待处理」，只对 bug/需求 有意义；
+          # 测试用例不参与 状态/ 流转，不加。
+          if ($extra -and (-not $isTestCase) -and ($names -notcontains $extra)) {
               Add-Label $extra
           }
 
