@@ -134,7 +134,7 @@ jobs:
     runs-on: windows
     if: >
       (github.event_name == 'pull_request_review' && (github.event.action == 'submitted' || github.event.action == 'edited')) ||
-      (github.event_name == 'issue_comment' && github.event.action == 'created' && contains(github.event.comment.body, '@ai'))
+      (github.event_name == 'issue_comment' && github.event.action == 'created' && (contains(github.event.comment.body, '@ai') || contains(github.event.comment.body, '@GiteaBot')))
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
         with:
@@ -363,12 +363,13 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
           # 中文走 env，脚本体保持 ASCII 以兼容 Windows runner
           WELCOME_MSG: |
-            **请创建 PR 并在正文中关联本工单，复制工单右下角的 `工单码` 引用到 PR 正文中。**
+            **请负责处理该工单的人，创建 PR 解决该工单。 并在`PR的正文`中关联本工单：复制工单右下角的 `工单码` 引用到 PR 正文中。**
 
-            **也可在评论中使用以下命令更新状态：**
-            - `/测试通过`：标记测试通过
-            - `/测试不通过`：标记测试不通过
-            - `/已处理` 或 `/已解决`：标记为已处理(建议能够通过代码解决的，尽量通过PR来自动化处理)
+            **在下面评论时，可使用以下命令更新状态：**
+            - `/测试通过`：bot自动标记 测试通过
+            - `/测试不通过`：bot自动标记 测试不通过
+            - `/已处理` 或 `/已解决`：bot自动标记为 已处理(能够通过代码解决的，尽量通过建PR来关联处理)
+
             - `@ai 你的问题`：让 AI 去处理（需输入小写 `@ai`）
         run: |
           $ErrorActionPreference = 'Stop'
