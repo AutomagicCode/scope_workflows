@@ -175,10 +175,13 @@ jobs:
           LABEL_DONE: '状态/已处理'
           LABEL_DEV_PROCESSING: '状态/处理中'
           LABEL_PENDING: '状态/待处理'
+          LABEL_TESTCASE: '类型/测试用例'
           MSG_NEED_DONE: '(这个工单缺少「状态/已处理」标签，/测试* 命令暂不生效。)'
           MSG_PR_OPEN: '(��＞＞﹏＜) 这个问题还没处理完呢～请等关联的 PR 合并后再测试吧。'
           MSG_NEED_MERGE: '(๑•̀ㅂ•́)و 至少需要有人用 PR 合并，或回复评论 /已处理 来触发工单添加「状态/已处理」标签。'
           MSG_TEST_OPEN_PR: '(・_・;) 提醒：本工单仍有未合并的 PR，代码可能尚未全部进入主线，测试结论请以此为准确认。'
+          MSG_TC_NEED_BUGS: '(・_・;) 该测试用例仍有未通过的关联缺陷，请先处理后再评论 /测试通过：'
+          MSG_TC_PENDING: '(・_・;) 已记录该缺陷测试通过，但关联的测试用例还有未通过的缺陷，暂不关闭该用例：'
         run: |
           # NOTE: keep the script body ASCII-only (comments included). Chinese only via env.
           # PS 5.1 on the Windows runner reads this file as GB2312; non-ASCII in the body
@@ -186,8 +189,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           try { [Console]::OutputEncoding = [Text.Encoding]::UTF8; chcp 65001 | Out-Null } catch {}
 
-          function Add-Label($name) {
+          function Add-Label($name, $inum) {
               if (-not $name) { return }
+              if (-not $inum) { $inum = $issue }
               $id = $null
               $owner = $repo.Split('/')[0]
               foreach ($lp in @("/repos/$repo/labels", "/orgs/$owner/labels")) {
@@ -211,12 +215,83 @@ jobs:
                   $abody = @{ labels = @($id) } | ConvertTo-Json
                   $abytes = [Text.Encoding]::UTF8.GetBytes($abody)
                   try {
-                      Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/labels" -Headers $auth -Body $abytes -ContentType 'application/json; charset=utf-8' | Out-Null
-                      Write-Host "issue #$issue added label -> $name"
+                      Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$inum/labels" -Headers $auth -Body $abytes -ContentType 'application/json; charset=utf-8' | Out-Null
+                      Write-Host "issue #$inum added label -> $name"
                   } catch { Write-Host "add label $name failed: $_" }
               } else {
                   Write-Host "WARN: label not found in repo/org labels, skip add: $name"
               }
+          }
+
+          # Apply the same test result (target label / state) to a related issue
+          # referenced (#N) in the current issue body. Skips PRs and self.
+          function Sync-Issue($inum) {
+              if (-not $inum) { return }
+              try {
+                  $r = Invoke-WebRequest -Method Get -Uri "$server/api/v1/repos/$repo/issues/$inum" -Headers $auth -UseBasicParsing
+                  $obj = [Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray()) | ConvertFrom-Json
+              } catch { Write-Host "sync: get issue #$inum failed: $_"; return }
+              if ($obj.pull_request) { Write-Host "sync: #$inum is a PR, skip."; return }
+              if ($obj.labels) {
+                  foreach ($lb in $obj.labels) {
+                      $ln = [string]$lb.name
+                      if (($removeSet -contains $ln) -and ($ln -ne $target)) {
+                          try {
+                              Invoke-RestMethod -Method Delete -Uri "$server/api/v1/repos/$repo/issues/$inum/labels/$($lb.id)" -Headers $auth | Out-Null
+                          } catch { Write-Host "sync: remove label '$ln' on #$inum skipped: $_" }
+                      }
+                  }
+              }
+              $cur = @()
+              if ($obj.labels) { $cur = @($obj.labels | ForEach-Object { [string]$_.name }) }
+              if ($cur -notcontains $target) { Add-Label $target $inum }
+              if ($extra -and ($cur -notcontains $extra)) { Add-Label $extra $inum }
+              if ($targetState) {
+                  $sj = @{ state = $targetState } | ConvertTo-Json
+                  $sb = [Text.Encoding]::UTF8.GetBytes($sj)
+                  try {
+                      Invoke-RestMethod -Method Patch -Uri "$server/api/v1/repos/$repo/issues/$inum" -Headers $auth -Body $sb -ContentType 'application/json; charset=utf-8' | Out-Null
+                  } catch { Write-Host "sync: set state on #$inum failed: $_" }
+              }
+              Write-Host "sync: issue #$inum -> $target ($targetState)"
+          }
+
+          function Get-Issue($inum) {
+              try {
+                  $r = Invoke-WebRequest -Method Get -Uri "$server/api/v1/repos/$repo/issues/$inum" -Headers $auth -UseBasicParsing
+                  return [Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray()) | ConvertFrom-Json
+              } catch { Write-Host "get issue #$inum failed: $_"; return $null }
+          }
+
+          function Has-Label($obj, $labelName) {
+              if (-not $obj -or -not $obj.labels) { return $false }
+              foreach ($l in $obj.labels) { if ([string]$l.name -eq $labelName) { return $true } }
+              return $false
+          }
+
+          # Reverse lookup: all bug issues (non test-case, non PR) whose body references #tcNum
+          function Get-LinkedBugs($tcNum) {
+              $result = @()
+              $page = 1
+              $pat = '(^|[^0-9])#' + $tcNum + '([^0-9]|$)'
+              while ($true) {
+                  $u = "$server/api/v1/repos/$repo/issues?state=all" + "&type=issues" + "&limit=50" + "&page=$page"
+                  try { $r = Invoke-WebRequest -Method Get -Uri $u -Headers $auth -UseBasicParsing } catch { break }
+                  $arr = [Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray()) | ConvertFrom-Json
+                  if (-not $arr) { break }
+                  $cnt = @($arr).Count
+                  if ($cnt -eq 0) { break }
+                  foreach ($it in $arr) {
+                      if ($it.pull_request) { continue }
+                      if ([int]$it.number -eq [int]$tcNum) { continue }
+                      if (Has-Label $it $env:LABEL_TESTCASE) { continue }
+                      $b = [string]$it.body
+                      if ($b -match $pat) { $result += $it }
+                  }
+                  if ($cnt -lt 50) { break }
+                  $page++
+              }
+              return $result
           }
 
           $server = $env:SERVER.TrimEnd('/')
@@ -271,6 +346,11 @@ jobs:
           $names = @()
           if ($issueObj.labels) { $names = @($issueObj.labels | ForEach-Object { [string]$_.name }) }
 
+          # Test-case issues record their own test result directly; they never carry the
+          # 'done' status label, so the /test* commands must not require it for them.
+          $isTestCase = ($names -contains $env:LABEL_TESTCASE)
+          if ($isTestCase -and (($target -eq $pass) -or ($target -eq $fail))) { $requireDone = $false }
+
           $hasOpenPR = $false
           $openPrNums = @()
           if ($requireDone) {
@@ -298,6 +378,23 @@ jobs:
                   -Headers $auth -Body $cbytes -ContentType 'application/json; charset=utf-8' | Out-Null
               Write-Host "issue #$issue missing done label, test command rejected (hasOpenPR=$hasOpenPR)."
               exit 0
+          }
+
+          # /test-pass on a test-case issue: only allow when ALL its linked bugs passed.
+          if ($isTestCase -and ($target -eq $pass)) {
+              $pend = @()
+              foreach ($bg in (Get-LinkedBugs $issue)) {
+                  if (-not (Has-Label $bg $pass)) { $pend += ('#' + $bg.number) }
+              }
+              if ($pend.Count -gt 0) {
+                  $rmsg = "@$author`r`n" + $env:MSG_TC_NEED_BUGS + ' ' + ($pend -join ' ')
+                  $rj = @{ body = $rmsg } | ConvertTo-Json -Depth 5
+                  $rb = [Text.Encoding]::UTF8.GetBytes($rj)
+                  Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" `
+                      -Headers $auth -Body $rb -ContentType 'application/json; charset=utf-8' | Out-Null
+                  Write-Host "test case #$issue has unpassed bugs, /pass rejected: $($pend -join ' ')"
+                  exit 0
+              }
           }
 
           if ($issueObj.labels) {
@@ -344,6 +441,46 @@ jobs:
               Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" `
                   -Headers $auth -Body $wbytes -ContentType 'application/json; charset=utf-8' | Out-Null
               Write-Host "warned: open PR still references issue #$issue (PR $($openPrNums -join ','))."
+          }
+
+          # Aggregate bug <-> test-case linkage for /test-pass and /test-fail, but only
+          # when the command was issued on a BUG (a test case aggregates its bugs above).
+          # A bug body references its test case via #N; here we update those test cases.
+          if ((-not $isTestCase) -and (($target -eq $pass) -or ($target -eq $fail))) {
+              $refTestCases = @()
+              $bodyText = [string]$issueObj.body
+              foreach ($m in [regex]::Matches($bodyText, '#(\d+)')) {
+                  $rn = [int]$m.Groups[1].Value
+                  if ($rn -eq [int]$issue) { continue }
+                  if ($refTestCases -contains $rn) { continue }
+                  $ro = Get-Issue $rn
+                  if ($ro -and (-not $ro.pull_request) -and (Has-Label $ro $env:LABEL_TESTCASE)) { $refTestCases += $rn }
+              }
+
+              foreach ($tc in $refTestCases) {
+                  if ($target -eq $fail) {
+                      # Any failing bug fails the test case.
+                      Sync-Issue $tc
+                  } else {
+                      # Pass: close the test case only when ALL its linked bugs passed.
+                      $pend = @()
+                      foreach ($bg in (Get-LinkedBugs $tc)) {
+                          if (-not (Has-Label $bg $pass)) { $pend += ('#' + $bg.number) }
+                      }
+                      if ($pend.Count -eq 0) {
+                          Sync-Issue $tc
+                      } else {
+                          $pmsg = "@$author`r`n" + $env:MSG_TC_PENDING + ' ' + ($pend -join ' ')
+                          $pj = @{ body = $pmsg } | ConvertTo-Json -Depth 5
+                          $pb = [Text.Encoding]::UTF8.GetBytes($pj)
+                          try {
+                              Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$tc/comments" `
+                                  -Headers $auth -Body $pb -ContentType 'application/json; charset=utf-8' | Out-Null
+                          } catch { Write-Host "comment on test case #$tc failed: $_" }
+                          Write-Host "test case #$tc still has unpassed bugs: $($pend -join ' ')"
+                      }
+                  }
+              }
           }
 
   # 新建工单欢迎提示：固定文案，引导使用 /测试通过、/已处理 等命令
