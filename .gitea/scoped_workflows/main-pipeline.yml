@@ -38,7 +38,7 @@ jobs:
   auto_assign:
     name: 工单自动管理
     runs-on: windows
-    # 对 GiteaBot 发的非命令/非 @ai 评论跳过（其它用 GITEA_TOKEN 不发 issue_comment 事件）
+    # 对 GiteaBot 发的非命令/非 @ai 评论跳过（其它用 GITEA_TOKEN 不发 issue_comment 事件） 跨仓库
     if: >
       github.event_name != 'issue_comment' ||
       github.event.comment.user.login != 'GiteaBot' ||
@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/auto-assign@main
         with:
-          bot-token: ${{ secrets.BOT_TOKEN }}
+          TOKEN: ${{ secrets.BOT_TOKEN }}
           testers: ${{ vars.TESTERS }}
           label-pending: '状态/待处理'
           label-processing: '状态/处理中'
@@ -125,7 +125,7 @@ jobs:
         with:
           release-target: ${{ github.event.inputs.release_target }}
           # 发版/打 tag 用 BOT_TOKEN；普通 build/test 用 GITEA_TOKEN
-          bot-token: ${{ (github.ref_type == 'tag' || github.event.inputs.release_target != '') && secrets.BOT_TOKEN || secrets.GITEA_TOKEN }}
+          TOKEN: ${{ (github.ref_type == 'tag' || github.event.inputs.release_target != '') && secrets.BOT_TOKEN || secrets.GITEA_TOKEN }}
 
   # 工单 / 评论 / PR 审核意见处理：不涉及 build，仅依赖 auto_assign
   ai_issue:
@@ -138,7 +138,7 @@ jobs:
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
         with:
-          bot-token: ${{ secrets.GITEA_TOKEN }} # 使用GITEA_TOKEN 减少后续触发不必要的actions
+          TOKEN: ${{ secrets.GITEA_TOKEN }} # 使用GITEA_TOKEN 减少后续触发不必要的actions
           api-key: ${{ secrets.AI_API_KEY }}
           api-base: ${{ vars.AI_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }}
           model: ${{ vars.AI_MODEL || 'glm-4-flash' }}
@@ -400,7 +400,7 @@ jobs:
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
         with:
-          bot-token: ${{ secrets.BOT_TOKEN }}
+          TOKEN: ${{ secrets.GITEA_TOKEN }}
           api-key: ${{ secrets.AI_API_KEY }}
           # AI 服务地址、模型、上下文长度放仓库变量里，切换 AI 时不需改代码
           api-base: ${{ vars.AI_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }}
@@ -424,6 +424,6 @@ jobs:
         with:
           webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
           # 通知用 GITEA_TOKEN
-          bot-token: ${{ secrets.GITEA_TOKEN }}
+          TOKEN: ${{ secrets.GITEA_TOKEN }}
           msgtype: text
           user-map: ${{ vars.WECHAT_USERMAP }}
