@@ -138,7 +138,7 @@ jobs:
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
         with:
-          bot-token: ${{ secrets.BOT_TOKEN }}
+          bot-token: ${{ secrets.GITEA_TOKEN }} # 使用GITEA_TOKEN 减少后续触发不必要的actions
           api-key: ${{ secrets.AI_API_KEY }}
           api-base: ${{ vars.AI_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }}
           model: ${{ vars.AI_MODEL || 'glm-4-flash' }}
