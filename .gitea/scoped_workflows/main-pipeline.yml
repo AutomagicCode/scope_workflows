@@ -22,12 +22,13 @@ on:
   workflow_dispatch:
     inputs:
       os:
-        description: '构建平台'
+        description: '构建平台(默认,即用工作流变量 DEFAULT_RUNNER)'
         type: choice
         options:
+          - 默认
           - windows-keil
           - ubuntu-ax650
-        default: windows
+        default: 默认
       release_target:
         description: '要发版的 commit hash(留空则只 build/test, 不发版)'
         required: false
@@ -114,7 +115,7 @@ jobs:
   build:
     name: 构建并测试/发布
     needs: [auto_assign]
-    runs-on: ${{ github.event.inputs.os || vars.DEFAULT_RUNNER || 'windows' }}
+    runs-on: ${{ github.event.inputs.os == '默认' && (vars.DEFAULT_RUNNER || 'windows') || github.event.inputs.os || vars.DEFAULT_RUNNER || 'windows' }}
     if: >
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
