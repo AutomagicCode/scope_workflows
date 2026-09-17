@@ -37,7 +37,7 @@ on:
 jobs:
   auto_assign:
     name: 工单自动管理
-    runs-on: windows
+    runs-on: windows-main
     # 对 GiteaBot 发的非命令/非 @ai 评论跳过（其它用 GITEA_TOKEN 不发 issue_comment 事件） 跨仓库
     if: >
       github.event_name != 'issue_comment' ||
@@ -59,7 +59,7 @@ jobs:
   request_reviewers:
     name: 自动指定代码评审人
     needs: [auto_assign]
-    runs-on: windows
+    runs-on: windows-main
     if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'reopened')
     steps:
       - name: 读取分支保护并自动指定评审人
@@ -131,7 +131,7 @@ jobs:
   ai_issue:
     name: AI 工单与评论处理
     needs: [auto_assign]
-    runs-on: windows
+    runs-on: windows-main
     if: >
       (github.event_name == 'pull_request_review' && (github.event.action == 'submitted' || github.event.action == 'edited')) ||
       (github.event_name == 'issue_comment' && github.event.action == 'created' && (contains(github.event.comment.body, '@ai') || contains(github.event.comment.body, '@GiteaBot')))
@@ -149,7 +149,7 @@ jobs:
   handle_command:
     name: 处理工单命令
     needs: [auto_assign]
-    runs-on: windows
+    runs-on: windows-main
     if: >
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
@@ -514,7 +514,7 @@ jobs:
   issue_welcome:
     name: 工单创建提示
     needs: [auto_assign]
-    runs-on: windows
+    runs-on: windows-main
     if: >
       github.event_name == 'issues' && github.event.action == 'opened'
     steps:
@@ -568,7 +568,7 @@ jobs:
   ai_review_pr:
     name: AI 审核与工单处理
     needs: [auto_assign, build]
-    runs-on: windows
+    runs-on: windows-main
     if: >
       github.event_name == 'pull_request' &&
       (github.event.action == 'opened' || github.event.action == 'synchronized') &&
@@ -591,7 +591,7 @@ jobs:
   notify:
     name: 企业微信通知
     needs: [auto_assign]
-    runs-on: windows
+    runs-on: windows-main
     if: >
       (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'reopened')) ||
       (github.event_name == 'pull_request_review' && (github.event.action == 'submitted' || github.event.action == 'dismissed')) ||
