@@ -141,7 +141,7 @@ jobs:
           TOKEN: ${{ secrets.GITEA_TOKEN }} # 使用GITEA_TOKEN 减少后续触发不必要的actions
           api-key: ${{ secrets.AI_API_KEY }}
           api-base: ${{ vars.AI_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }}
-          model: ${{ vars.AI_MODEL || 'glm-4-flash' }}
+          models: ${{ vars.AI_MODELS }}
           max-diff-chars: ${{ vars.AI_MAX_DIFF_CHARS || '24000' }}
           use-gemini-cli: ${{ vars.AI_USE_GEMINI_CLI || 'false' }}
 
@@ -583,7 +583,7 @@ jobs:
           api-key: ${{ secrets.AI_API_KEY }}
           # AI 服务地址、模型、上下文长度放仓库变量里，切换 AI 时不需改代码
           api-base: ${{ vars.AI_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }}
-          model: ${{ vars.AI_MODEL || 'glm-4-flash' }}
+          models: ${{ vars.AI_MODELS }}
           max-diff-chars: ${{ vars.AI_MAX_DIFF_CHARS || '24000' }}
           # 为 true 时启用 gemini-cli agent 模式分析整个 PR 目录（仅对 pull_request 生效）
           use-gemini-cli: ${{ vars.AI_USE_GEMINI_CLI || 'false' }}
