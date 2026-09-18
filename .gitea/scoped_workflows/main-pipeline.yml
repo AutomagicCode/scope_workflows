@@ -171,6 +171,11 @@ jobs:
           CMD_FAIL: '/测试不通过'
           CMD_DONE1: '/已处理'
           CMD_DONE2: '/已解决'
+          CMD_ASSIGN: '/assign'
+          MSG_ASSIGN_OK: '(・_・)Y 已将本工单指派给 @{user} 。'
+          MSG_ASSIGN_DENY: '(>﹏<) 本工单已有负责人，仅当前被指派者可用 /assign 转派（管理员可在右侧属性栏直接修改指派）。'
+          MSG_ASSIGN_USAGE: '用法：/assign @用户名（无人负责时任何人可认领；有负责人时仅本人可转派）。'
+          MSG_ASSIGN_FAIL: '(・_・;) 指派给 @{user} 失败，请确认用户名正确且对本仓库有访问权限。'
           LABEL_PASS: '测试/通过'
           LABEL_FAIL: '测试/不通过'
           LABEL_DONE: '状态/已处理'
@@ -320,6 +325,58 @@ jobs:
 
           if (-not $token) { Write-Error 'missing BOT_TOKEN'; exit 1 }
 
+          $auth = @{ Authorization = "token $token" }
+
+          # /assign @user : reassign the issue. Unassigned -> anyone may claim;
+          # assigned -> only a current assignee may transfer. (admins use the UI directly)
+          if ($body.StartsWith($env:CMD_ASSIGN)) {
+              $rest = $body.Substring($env:CMD_ASSIGN.Length).Trim()
+              $m = [regex]::Match($rest, '^@?([A-Za-z0-9][A-Za-z0-9-_.]*)')
+              if (-not $m.Success) {
+                  $umsg = "@$author`r`n" + $env:MSG_ASSIGN_USAGE
+                  $uj = @{ body = $umsg } | ConvertTo-Json -Depth 5
+                  $ub = [Text.Encoding]::UTF8.GetBytes($uj)
+                  try { Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" -Headers $auth -Body $ub -ContentType 'application/json; charset=utf-8' | Out-Null } catch {}
+                  Write-Host "assign: no target user parsed, usage replied."
+                  exit 0
+              }
+              $atarget = $m.Groups[1].Value
+
+              $aResp = Invoke-WebRequest -Method Get -Uri "$server/api/v1/repos/$repo/issues/$issue" -Headers $auth -UseBasicParsing
+              $aObj = [Text.Encoding]::UTF8.GetString($aResp.RawContentStream.ToArray()) | ConvertFrom-Json
+              if ($aObj.pull_request) { Write-Host "assign: #$issue is a PR, skip."; exit 0 }
+
+              $curAssignees = @()
+              if ($aObj.assignees) { $curAssignees = @($aObj.assignees | ForEach-Object { [string]$_.login }) }
+
+              if (($curAssignees.Count -gt 0) -and ($curAssignees -notcontains $author)) {
+                  $dmsg = "@$author`r`n" + $env:MSG_ASSIGN_DENY
+                  $dj = @{ body = $dmsg } | ConvertTo-Json -Depth 5
+                  $db = [Text.Encoding]::UTF8.GetBytes($dj)
+                  try { Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" -Headers $auth -Body $db -ContentType 'application/json; charset=utf-8' | Out-Null } catch {}
+                  Write-Host "assign: author '$author' not a current assignee, denied."
+                  exit 0
+              }
+
+              $abody = @{ assignees = @($atarget) } | ConvertTo-Json
+              $abytes = [Text.Encoding]::UTF8.GetBytes($abody)
+              try {
+                  Invoke-RestMethod -Method Patch -Uri "$server/api/v1/repos/$repo/issues/$issue" -Headers $auth -Body $abytes -ContentType 'application/json; charset=utf-8' | Out-Null
+                  $okmsg = "@$author`r`n" + $env:MSG_ASSIGN_OK.Replace('{user}', $atarget)
+                  $okj = @{ body = $okmsg } | ConvertTo-Json -Depth 5
+                  $okb = [Text.Encoding]::UTF8.GetBytes($okj)
+                  try { Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" -Headers $auth -Body $okb -ContentType 'application/json; charset=utf-8' | Out-Null } catch {}
+                  Write-Host "assign: issue #$issue assigned to '$atarget'."
+              } catch {
+                  $emsg = "@$author`r`n" + $env:MSG_ASSIGN_FAIL.Replace('{user}', $atarget)
+                  $ej = @{ body = $emsg } | ConvertTo-Json -Depth 5
+                  $eb = [Text.Encoding]::UTF8.GetBytes($ej)
+                  try { Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" -Headers $auth -Body $eb -ContentType 'application/json; charset=utf-8' | Out-Null } catch {}
+                  Write-Host "assign: PATCH failed: $_"
+              }
+              exit 0
+          }
+
           $done    = $env:LABEL_DONE
           $devProc = $env:LABEL_DEV_PROCESSING
           $pending = $env:LABEL_PENDING
@@ -351,8 +408,6 @@ jobs:
               Write-Host "comment author '$author' not in TESTERS, skip."
               exit 0
           }
-
-          $auth = @{ Authorization = "token $token" }
 
           $resp = Invoke-WebRequest -Method Get -Uri "$server/api/v1/repos/$repo/issues/$issue" `
               -Headers $auth -UseBasicParsing
@@ -536,6 +591,7 @@ jobs:
             - `/测试通过`：bot自动标记 测试通过
             - `/测试不通过`：bot自动标记 测试不通过
             - `/已处理` 或 `/已解决`：bot自动标记为 已处理(能够通过代码解决的，尽量通过建PR来关联处理)
+            - `/assign @xxx`：指派工单负责人（无人负责时任何人可认领；已有负责人时仅本人可转派，管理员可直接在右侧属性栏修改指派）
 
             - `@ai 你的问题`：让 AI 去处理（需输入小写 `@ai`）
           WELCOME_MSG_TESTCASE: |
@@ -597,7 +653,9 @@ jobs:
       (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'reopened')) ||
       startsWith(github.event_name, 'pull_request_review') ||
       (github.event_name == 'issues' && (github.event.action == 'opened' || github.event.action == 'closed' || github.event.action == 'reopened')) ||
-      (github.event_name == 'issue_comment' && github.event.action == 'created') ||
+      (github.event_name == 'issue_comment' && github.event.action == 'created' &&
+       !contains(github.event.comment.body, '@ai') &&
+       !contains(github.event.comment.body, '@GiteaBot')) ||
       (github.event_name == 'release' && (github.event.action == 'published' || github.event.action == 'created'))
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/wechat-notify@main
