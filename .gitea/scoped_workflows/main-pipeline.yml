@@ -155,7 +155,11 @@ jobs:
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
       !github.event.issue.pull_request &&
-      startsWith(github.event.comment.body, '/')
+      (startsWith(github.event.comment.body, '/') ||
+       contains(github.event.comment.body, '/assign') ||
+       contains(github.event.comment.body, '/测试') ||
+       contains(github.event.comment.body, '/已处理') ||
+       contains(github.event.comment.body, '/已解决'))
     steps:
       - name: 解析命令并更新工单
         shell: powershell
@@ -172,10 +176,10 @@ jobs:
           CMD_DONE1: '/已处理'
           CMD_DONE2: '/已解决'
           CMD_ASSIGN: '/assign'
-          MSG_ASSIGN_OK: '(・_・)Y 已将本工单指派给 @{user} 。'
+          MSG_ASSIGN_OK: '(・_・)Y 已将工单转派给 @{user} 。'
           MSG_ASSIGN_DENY: '(>﹏<) 本工单已有负责人，仅当前被指派者可用 /assign 转派（管理员可在右侧属性栏直接修改指派）。'
           MSG_ASSIGN_USAGE: '用法：/assign @用户名（无人负责时任何人可认领；有负责人时仅本人可转派）。'
-          MSG_ASSIGN_FAIL: '(・_・;) 指派给 @{user} 失败，请确认用户名正确且对本仓库有访问权限。'
+          MSG_ASSIGN_FAIL: '(・_・;) 转派给 @{user} 失败，请确认用户名正确且对本仓库有访问权限。'
           LABEL_PASS: '测试/通过'
           LABEL_FAIL: '测试/不通过'
           LABEL_DONE: '状态/已处理'
@@ -320,6 +324,10 @@ jobs:
           $issue  = $env:ISSUE
           $body   = $env:BODY.Trim()
           $author = $env:AUTHOR
+
+          # Git Bash (MSYS) rewrites "/cmd" args to "X:/gitroot/cmd"; strip the
+          # drive-path prefix so mangled commands still run.
+          if ($body -match '^[A-Za-z]:[\\/]\S*/(.*)$') { $body = '/' + $Matches[1].TrimStart() }
           $pass   = $env:LABEL_PASS
           $fail   = $env:LABEL_FAIL
 
@@ -358,7 +366,28 @@ jobs:
                   exit 0
               }
 
-              $abody = @{ assignees = @($atarget) } | ConvertTo-Json
+              $checkUrl = "$server/api/v1/repos/$repo/assignees/$atarget"
+              $canAssign = $false
+              try {
+                  $checkResp = Invoke-WebRequest -Method Get -Uri $checkUrl -Headers $auth -UseBasicParsing
+                  if ($checkResp.StatusCode -ge 200 -and $checkResp.StatusCode -lt 300) {
+                      $canAssign = $true
+                  }
+              } catch {
+                  $canAssign = $false
+              }
+
+              if (-not $canAssign) {
+                  $emsg = "@$author`r`n" + $env:MSG_ASSIGN_FAIL.Replace('{user}', $atarget)
+                  $ej = @{ body = $emsg } | ConvertTo-Json -Depth 5
+                  $eb = [Text.Encoding]::UTF8.GetBytes($ej)
+                  try { Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" -Headers $auth -Body $eb -ContentType 'application/json; charset=utf-8' | Out-Null } catch {}
+                  Write-Host "assign: target '$atarget' cannot be assigned to this repo."
+                  exit 0
+              }
+
+              $newAssignees = @($curAssignees | Where-Object { $_ -ne $author }) + @($atarget) | Where-Object { $_ } | Select-Object -Unique
+              $abody = @{ assignees = @($newAssignees) } | ConvertTo-Json
               $abytes = [Text.Encoding]::UTF8.GetBytes($abody)
               try {
                   Invoke-RestMethod -Method Patch -Uri "$server/api/v1/repos/$repo/issues/$issue" -Headers $auth -Body $abytes -ContentType 'application/json; charset=utf-8' | Out-Null
@@ -366,7 +395,7 @@ jobs:
                   $okj = @{ body = $okmsg } | ConvertTo-Json -Depth 5
                   $okb = [Text.Encoding]::UTF8.GetBytes($okj)
                   try { Invoke-RestMethod -Method Post -Uri "$server/api/v1/repos/$repo/issues/$issue/comments" -Headers $auth -Body $okb -ContentType 'application/json; charset=utf-8' | Out-Null } catch {}
-                  Write-Host "assign: issue #$issue assigned to '$atarget'."
+                  Write-Host "assign: issue #$issue now assigned to: $($newAssignees -join ', ')."
               } catch {
                   $emsg = "@$author`r`n" + $env:MSG_ASSIGN_FAIL.Replace('{user}', $atarget)
                   $ej = @{ body = $emsg } | ConvertTo-Json -Depth 5
