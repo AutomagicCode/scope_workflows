@@ -134,7 +134,7 @@ jobs:
     needs: [auto_assign]
     runs-on: windows-main
     if: >
-      (github.event_name == 'pull_request_review' && (github.event.action == 'submitted' || github.event.action == 'edited')) ||
+      startsWith(github.event_name, 'pull_request_review') ||
       (github.event_name == 'issue_comment' && github.event.action == 'created' && (contains(github.event.comment.body, '@ai') || contains(github.event.comment.body, '@GiteaBot')))
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
@@ -567,7 +567,7 @@ jobs:
 
   # PR 代码审核：非 WIP 的 PR 在 build 成功后自动分析
   ai_review_pr:
-    name: AI 审核与工单处理
+    name: AI 审核PR
     needs: [auto_assign, build]
     runs-on: windows-main
     if: >
@@ -595,7 +595,7 @@ jobs:
     runs-on: windows-main
     if: >
       (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'reopened')) ||
-      (github.event_name == 'pull_request_review' && (github.event.action == 'submitted' || github.event.action == 'dismissed')) ||
+      startsWith(github.event_name, 'pull_request_review') ||
       (github.event_name == 'issues' && (github.event.action == 'opened' || github.event.action == 'closed' || github.event.action == 'reopened')) ||
       (github.event_name == 'issue_comment' && github.event.action == 'created') ||
       (github.event_name == 'release' && (github.event.action == 'published' || github.event.action == 'created'))
