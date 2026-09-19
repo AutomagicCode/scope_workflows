@@ -17,8 +17,6 @@ on:
     types: [opened, edited, assigned, closed, reopened]
   issue_comment:
     types: [created]
-  release:
-    types: [published, created]
   workflow_dispatch:
     inputs:
       os:
@@ -127,6 +125,9 @@ jobs:
           release-target: ${{ github.event.inputs.release_target }}
           # 发版/打 tag 用 BOT_TOKEN；普通 build/test 用 GITEA_TOKEN
           TOKEN: ${{ (github.ref_type == 'tag' || github.event.inputs.release_target != '') && secrets.BOT_TOKEN || secrets.GITEA_TOKEN }}
+          # 发布汇总通知（未测试通过的工单 @ 指派人）
+          webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
+          user-map: ${{ vars.WECHAT_USERMAP }}
 
   # 工单 / 评论 / PR 审核意见处理：不涉及 build，仅依赖 auto_assign
   ai_issue:
@@ -182,6 +183,7 @@ jobs:
           MSG_ASSIGN_FAIL: '(・_・;) 转派给 @{user} 失败，请确认用户名正确且对本仓库有访问权限。'
           LABEL_PASS: '测试/通过'
           LABEL_FAIL: '测试/不通过'
+          LABEL_AWAITING_TEST: '测试/待测试'
           LABEL_DONE: '状态/已处理'
           LABEL_DEV_PROCESSING: '状态/处理中'
           LABEL_PENDING: '状态/待处理'
@@ -330,6 +332,7 @@ jobs:
           if ($body -match '^[A-Za-z]:[\\/]\S*/(.*)$') { $body = '/' + $Matches[1].TrimStart() }
           $pass   = $env:LABEL_PASS
           $fail   = $env:LABEL_FAIL
+          $awaiting = $env:LABEL_AWAITING_TEST
 
           if (-not $token) { Write-Error 'missing BOT_TOKEN'; exit 1 }
 
@@ -410,7 +413,7 @@ jobs:
           $devProc = $env:LABEL_DEV_PROCESSING
           $pending = $env:LABEL_PENDING
 
-          $testGroup   = @($pass, $fail)
+          $testGroup   = @($pass, $fail, $awaiting)
           $statusGroup = @($pending, $devProc, $done)
           $target = $null
           $removeSet = @()
@@ -624,7 +627,7 @@ jobs:
 
             - `@ai 你的问题`：让 AI 去处理（需输入小写 `@ai`）
           WELCOME_MSG_TESTCASE: |
-            **这是一条测试用例工单。关联的缺陷BUG工单全部被标记为测试通过会自动以测试通过状态关闭该工单；或者进行测试后，在下面评论更新结果：**
+            **这是一条测试用例工单。关联了该用例的缺陷BUG工单全部被标记为测试通过会自动以测试通过状态关闭该工单；或者进行测试后，在下面评论更新结果：**
             - `/测试通过`：bot自动标记 测试通过 并关闭本用例
             - `/测试不通过`：bot自动标记 测试不通过（请另建缺陷工单，并在缺陷正文关联本用例编号）
         run: |
@@ -684,8 +687,7 @@ jobs:
       (github.event_name == 'issues' && (github.event.action == 'opened' || github.event.action == 'closed' || github.event.action == 'reopened')) ||
       (github.event_name == 'issue_comment' && github.event.action == 'created' &&
        !contains(github.event.comment.body, '@ai') &&
-       !contains(github.event.comment.body, '@GiteaBot')) ||
-      (github.event_name == 'release' && (github.event.action == 'published' || github.event.action == 'created'))
+       !contains(github.event.comment.body, '@GiteaBot'))
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/wechat-notify@main
         with:
