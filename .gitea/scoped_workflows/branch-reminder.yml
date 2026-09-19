@@ -1,0 +1,27 @@
+name: 分支例行检查
+
+# 定时 (Gitea 服务器本地时区）扫描仓库分支：
+# - 未关联 PR 且有未合并提交的分支 → 提醒创建 PR，@ 最近提交者
+# - PR 已关闭但未合并的分支 → 提醒重新创建 PR
+# - PR 已合并但未删除的分支 → 提醒删除分支
+
+# 也可在 Actions 页面手动触发（workflow_dispatch）做验证。
+
+on:
+  schedule:
+    - cron: '20 8 * * 1'  # 每周一 08:20 ⭐
+  workflow_dispatch: {}
+
+jobs:
+  branch_reminder:
+    name: 分支例行检查
+    runs-on: windows-main
+    steps:
+      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/branch-reminder@main
+        with:
+          webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
+          TOKEN: ${{ secrets.GITEA_TOKEN }}
+          user-map: ${{ vars.WECHAT_USERMAP }}
+          # 以下两个可调：新推分支宽限期、忽略的分支前缀
+          grace-hours: ${{ vars.BRANCH_REMIND_GRACE_HOURS || '24' }}
+          exclude-prefixes: ${{ vars.BRANCH_REMIND_EXCLUDE || '' }}
