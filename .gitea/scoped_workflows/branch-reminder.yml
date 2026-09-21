@@ -1,15 +1,14 @@
 name: 分支例行检查
 
-# 定时 (Gitea 服务器本地时区）扫描仓库分支：
+# 手动触发扫描仓库分支（scoped workflows 不支持 on: schedule，故不做定时；
+# 需要定时可用外部 cron 调 Gitea API 触发 workflow_dispatch）：
 # - 未关联 PR 且有未合并提交的分支 → 提醒创建 PR，@ 最近提交者
 # - PR 已关闭但未合并的分支 → 提醒重新创建 PR
 # - PR 已合并但未删除的分支 → 提醒删除分支
 
-# 也可在 Actions 页面手动触发（workflow_dispatch）做验证。
+# 在 Actions 页面手动触发（workflow_dispatch）运行。
 
 on:
-  schedule:
-    - cron: '20 8 * * 1'  # 每周一 08:20 ⭐
   workflow_dispatch: {}
 
 jobs:
