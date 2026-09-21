@@ -114,6 +114,11 @@ jobs:
     name: 构建并测试/发布
     needs: [auto_assign]
     runs-on: ${{ github.event.inputs.os == '默认' && (vars.DEFAULT_RUNNER || 'windows') || github.event.inputs.os || vars.DEFAULT_RUNNER || 'windows' }}
+    # push main 时取消同分支进行中的旧构建，确保测试环境部署的是最新代码版本；
+    # tag / workflow_dispatch（发布、量产）各自独立分组且不取消，避免打断发版。
+    concurrency:
+      group: build-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
     if: >
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
@@ -128,6 +133,13 @@ jobs:
           # 发布汇总通知（未测试通过的工单 @ 指派人）
           webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
           user-map: ${{ vars.WECHAT_USERMAP }}
+          # 测试环境自动部署（仅 push main 生效；发布/量产走 tag/手动触发）
+          # 需要部署的仓库放 deploy.sh / deploy.bat；不需要则不放脚本，自动跳过。
+          deploy-to-test: ${{ vars.DEPLOY_TO_TEST || 'true' }}
+          deploy-host: ${{ vars.TEST_DEPLOY_HOST }}
+          deploy-user: ${{ vars.TEST_DEPLOY_USER }}
+          deploy-port: ${{ vars.TEST_DEPLOY_PORT || '22' }}
+          deploy-ssh-key: ${{ secrets.TEST_DEPLOY_SSH_KEY }}
 
   # 工单 / 评论 / PR 审核意见处理：不涉及 build，仅依赖 auto_assign
   ai_issue:
