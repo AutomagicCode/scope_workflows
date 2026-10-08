@@ -30,10 +30,15 @@ on:
           - ubuntu-ax650
         default: 默认
       release_target:
-        description: '要发版的 commit hash(留空则只 build/test, 不发版)'
+        description: '要发版的 commit hash(留空=发 main 最新提交; 勾「仅构建」则不发版)'
         required: false
         default: ''
         type: string
+      build_only:
+        description: '仅构建测试不发布（开启后忽略发版，只跑 build/test）'
+        required: false
+        default: false
+        type: boolean
       deploy_test:
         description: '手动把最新 main 部署到测试环境'
         required: false
@@ -134,9 +139,13 @@ jobs:
     steps:
       - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/build-template@main
         with:
-          release-target: ${{ github.event.inputs.release_target }}
+          # release-target 有效值解析：
+          #   1) 显式填了 hash 且未勾 build_only → 用该 hash
+          #   2) workflow_dispatch 且未勾 build_only → main 最新提交(github.sha)
+          #   3) 其余（勾了 build_only / 非 dispatch 事件）→ 空，只 build/test
+          release-target: ${{ github.event.inputs.release_target != '' && github.event.inputs.build_only != 'true' && github.event.inputs.release_target || (github.event.inputs.build_only != 'true' && github.event_name == 'workflow_dispatch' && github.sha || '') }}
           # 发版/打 tag 用 BOT_TOKEN；普通 build/test 用 GITEA_TOKEN
-          TOKEN: ${{ (github.ref_type == 'tag' || github.event.inputs.release_target != '') && secrets.BOT_TOKEN || secrets.GITEA_TOKEN }}
+          TOKEN: ${{ (github.ref_type == 'tag' || github.event.inputs.release_target != '' || (github.event_name == 'workflow_dispatch' && github.event.inputs.build_only != 'true')) && secrets.BOT_TOKEN || secrets.GITEA_TOKEN }}
           # 发布汇总通知（未测试通过的工单 @ 指派人）
           webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
           user-map: ${{ vars.WECHAT_USERMAP }}
