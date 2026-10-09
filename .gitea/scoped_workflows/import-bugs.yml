@@ -20,7 +20,7 @@ on:
 jobs:
   import:
     name: 批量创建缺陷工单
-    runs-on: windows
+    runs-on: windows-main
     steps:
       - name: 下载源码
         uses: actions/checkout@v4
