@@ -56,7 +56,7 @@ jobs:
       startsWith(github.event.comment.body, '/') ||
       contains(github.event.comment.body, '@ai')
     steps:
-      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/auto-assign@main
+      - uses: http://192.168.31.188:3000/wt-rd/CI-templates/.github/actions/auto-assign@main
         with:
           TOKEN: ${{ secrets.BOT_TOKEN }}
           testers: ${{ vars.TESTERS }}
@@ -82,7 +82,7 @@ jobs:
       (github.event_name == 'pull_request' && github.base_ref == 'main' &&
        (github.event.action == 'opened' || github.event.action == 'synchronized' || github.event.action == 'reopened'))
     steps:
-      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/build-template@main
+      - uses: http://192.168.31.188:3000/wt-rd/CI-templates/.github/actions/build-template@main
         with:
           # release-target 有效值解析：
           #   1) 显式填了 hash 且未勾 build_only → 用该 hash
@@ -112,7 +112,7 @@ jobs:
       startsWith(github.event_name, 'pull_request_review') ||
       (github.event_name == 'issue_comment' && github.event.action == 'created' && (contains(github.event.comment.body, '@ai') || contains(github.event.comment.body, '@GiteaBot')))
     steps:
-      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
+      - uses: http://192.168.31.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
         with:
           TOKEN: ${{ secrets.GITEA_TOKEN }} # 使用GITEA_TOKEN 减少后续触发不必要的actions
           api-key: ${{ secrets.AI_API_KEY }}
@@ -141,7 +141,7 @@ jobs:
       - name: 解析命令并更新工单
         shell: powershell
         env:
-          SERVER: http://192.168.1.188:3000
+          SERVER: http://192.168.31.188:3000
           TOKEN: ${{ secrets.GITEA_TOKEN }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ github.event.issue.number }}
@@ -585,7 +585,7 @@ jobs:
       - name: 发布固定提示
         shell: powershell
         env:
-          SERVER: http://192.168.1.188:3000
+          SERVER: http://192.168.31.188:3000
           TOKEN: ${{ secrets.GITEA_TOKEN }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ github.event.issue.number }}
@@ -642,7 +642,7 @@ jobs:
       !contains(github.event.pull_request.title, 'Draft:') &&
       !contains(github.event.pull_request.title, '[Draft]')
     steps:
-      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
+      - uses: http://192.168.31.188:3000/wt-rd/CI-templates/.github/actions/ai-review@main
         with:
           TOKEN: ${{ secrets.GITEA_TOKEN }}
           api-key: ${{ secrets.AI_API_KEY }}
@@ -668,7 +668,7 @@ jobs:
        !contains(github.event.comment.body, '@ai') &&
        !contains(github.event.comment.body, '@GiteaBot'))
     steps:
-      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/wechat-notify@main
+      - uses: http://192.168.31.188:3000/wt-rd/CI-templates/.github/actions/wechat-notify@main
         with:
           webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
           # 通知用 GITEA_TOKEN

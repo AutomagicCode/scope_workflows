@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 导入测试用例
-        uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/import-test-cases@main
+        uses: http://192.168.31.188:3000/wt-rd/CI-templates/.github/actions/import-test-cases@main
         with:
           TOKEN: ${{ secrets.BOT_TOKEN }}
           target-repo: ${{ github.repository }}

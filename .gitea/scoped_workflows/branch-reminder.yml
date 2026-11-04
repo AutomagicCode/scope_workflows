@@ -16,7 +16,7 @@ jobs:
     name: 分支例行检查
     runs-on: windows-main
     steps:
-      - uses: http://192.168.1.188:3000/wt-rd/CI-templates/.github/actions/branch-reminder@main
+      - uses: http://192.168.31.188:3000/wt-rd/CI-templates/.github/actions/branch-reminder@main
         with:
           webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
           TOKEN: ${{ secrets.GITEA_TOKEN }}
