@@ -122,6 +122,11 @@ jobs:
           use-opencode: ${{ vars.AI_USE_OPENCODE || 'true' }}
           opencode-model: ${{ vars.AI_OPENCODE_MODEL || 'opencode/nemotron-3.5-lightning-free,opencode/big-pickle' }}
           use-gemini-cli: ${{ vars.AI_USE_GEMINI_CLI || 'false' }}
+          # devin-cli：团队账号 + 高阶模型；auto=runner 上健康检查通过则优先使用，否则自动跳过，失败依次降级
+          use-devin-cli: ${{ vars.AI_USE_DEVIN_CLI || 'auto' }}
+          devin-model: ${{ vars.AI_DEVIN_MODEL }}
+          devin-rotate-script: ${{ vars.AI_DEVIN_ROTATE_SCRIPT || 'E:\demo\tool\devin额度轮换.py' }}
+          agent-order: ${{ vars.AI_AGENT_ORDER || 'devin,opencode,gemini-cli' }}
 
   # 处理工单评论命令：/测试通过、/测试不通过、/已处理、/已解决
   handle_command:
@@ -655,6 +660,11 @@ jobs:
           opencode-model: ${{ vars.AI_OPENCODE_MODEL || 'opencode/nemotron-3.5-lightning-free,opencode/big-pickle' }}
           # 为 true 时启用 gemini-cli agent 模式分析整个 PR 目录（仅对 pull_request 生效）
           use-gemini-cli: ${{ vars.AI_USE_GEMINI_CLI || 'false' }}
+          # devin-cli：团队账号 + 高阶模型；auto=runner 上健康检查通过则优先使用，否则自动跳过，失败依次降级
+          use-devin-cli: ${{ vars.AI_USE_DEVIN_CLI || 'auto' }}
+          devin-model: ${{ vars.AI_DEVIN_MODEL }}
+          devin-rotate-script: ${{ vars.AI_DEVIN_ROTATE_SCRIPT || 'E:\demo\tool\devin额度轮换.py' }}
+          agent-order: ${{ vars.AI_AGENT_ORDER || 'devin,opencode,gemini-cli' }}
 
   notify:
     name: 企业微信通知
